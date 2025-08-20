@@ -20,3 +20,21 @@ dependencies = [
 
 [project.scripts]
 md2beauty = "md2beauty.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-q --cov=md2beauty --cov-report=term-missing --cov-report=xml:coverage.xml"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["md2beauty"]
+omit = [
+    "md2beauty/__main__.py",
+]
+
+[tool.coverage.report]
+fail_under = 65
+show_missing = true

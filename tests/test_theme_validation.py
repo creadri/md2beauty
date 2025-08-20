@@ -18,7 +18,8 @@ def test_invalid_extra_style_key_rejected():
 
 
 def test_invalid_page_type():
-    bad = {"page": {"type": "a3"}}  # only a4 or letter allowed
+    # Use a clearly invalid page type now that multiple types are supported
+    bad = {"page": {"type": "notasize"}}
     with pytest.raises(ValidationError):
         Theme.from_dict(bad)
 
