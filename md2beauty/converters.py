@@ -2,18 +2,13 @@ from __future__ import annotations
 
 from typing import Optional, Union, Iterable
 import re
-import shutil
-import subprocess
 import tempfile
 import os
-import pathlib
-import hashlib
-import base64
-import logging
 import io
 
 from .theme import Theme
 from .mdparser import parse_markdown_stream
+from .embeds import default_diagram_service, RenderResult
 
 
 class Converter:
@@ -63,28 +58,58 @@ class HtmlConverter(Converter):
             SvgBlock as IRSvg,
             ThematicBreak as IRHr,
             Table as IRTable,
+            parse_inline_emphasis,
         )
         title_text: Optional[str] = None
 
         for block in parse_markdown_stream(lines=lines):
             if isinstance(block, IRHeading):
                 lvl = max(1, min(6, block.level))
-                parts.append(f"<h{lvl}>{self._escape_html(block.text)}</h{lvl}>")
+                spans = parse_inline_emphasis(block.text)
+                inner = "".join(self._render_inline_span_html(s) for s in spans) or self._escape_html(block.text)
+                parts.append(f"<h{lvl}>{inner}</h{lvl}>")
                 if title_text is None:
                     title_text = block.text.strip()
             elif isinstance(block, IRParagraph):
-                parts.append(f"<p>{self._escape_html(block.text)}</p>")
+                spans = parse_inline_emphasis(block.text)
+                inner = "".join(self._render_inline_span_html(s) for s in spans) or self._escape_html(block.text)
+                parts.append(f"<p>{inner}</p>")
             elif isinstance(block, IRCode):
                 if block.language == 'mermaid':
-                    svg = self._render_mermaid_to_svg(block.code)
-                    parts.append(svg if svg else self._wrap_code_block(block.code, 'mermaid'))
+                    rr: Optional[RenderResult] = None
+                    try:
+                        rr = default_diagram_service.render(
+                            kind="mermaid",
+                            code=block.code,
+                            preferred_formats=["svg", "png"],
+                        )
+                    except Exception:
+                        rr = None
+                    if rr and rr.mime == "image/svg+xml":
+                        try:
+                            with open(rr.path, "r", encoding="utf-8") as f:
+                                parts.append(f.read())
+                        finally:
+                            rr.cleanup()
+                    elif rr and rr.mime.startswith("image/"):
+                        try:
+                            with open(rr.path, "rb") as f:
+                                import base64 as _b64
+                                data = _b64.b64encode(f.read()).decode("ascii")
+                                parts.append(f"<img src=\"data:{rr.mime};base64,{data}\" alt=\"mermaid diagram\"/>")
+                        finally:
+                            rr.cleanup()
+                    else:
+                        parts.append(self._wrap_code_block(block.code, 'mermaid'))
                 else:
                     parts.append(f"<pre><code>{self._escape_html(block.code)}</code></pre>")
             elif isinstance(block, IRList):
                 tag = 'ol' if block.ordered else 'ul'
                 parts.append(f"<{tag}>")
                 for item in block.items:
-                    parts.append(f"<li>{self._escape_html(item.text)}</li>")
+                    spans = parse_inline_emphasis(item.text)
+                    inner = "".join(self._render_inline_span_html(s) for s in spans) or self._escape_html(item.text)
+                    parts.append(f"<li>{inner}</li>")
                 parts.append(f"</{tag}>")
             elif isinstance(block, IRImage):
                 parts.append(f"<img src=\"{self._escape_html(block.src)}\" alt=\"{self._escape_html(block.alt)}\" />")
@@ -93,18 +118,22 @@ class HtmlConverter(Converter):
             elif isinstance(block, IRHr):
                 parts.append("<hr />")
             elif isinstance(block, IRTable):
-                # Basic table rendering with alignment styles
+                # Basic table rendering with alignment styles + inline emphasis
+                from .mdparser import parse_inline_emphasis as _pie
                 def _td_style(align: Optional[str]) -> str:
                     return f' style="text-align: {align};"' if align in ("left", "center", "right") else ''
+                def _inline_html(text: str) -> str:
+                    spans = _pie(text)
+                    return "".join(self._render_inline_span_html(s) for s in spans) if spans else self._escape_html(text)
                 thead = "<thead><tr>" + "".join(
-                    f"<th{_td_style(block.aligns[i] if i < len(block.aligns) else None)}>{self._escape_html(h)}</th>"
+                    f"<th{_td_style(block.aligns[i] if i < len(block.aligns) else None)}>{_inline_html(h)}</th>"
                     for i, h in enumerate(block.headers)
                 ) + "</tr></thead>"
                 tbody_rows = []
                 for row in block.rows:
                     tds = []
                     for i, cell in enumerate(row):
-                        tds.append(f"<td{_td_style(block.aligns[i] if i < len(block.aligns) else None)}>{self._escape_html(cell)}</td>")
+                        tds.append(f"<td{_td_style(block.aligns[i] if i < len(block.aligns) else None)}>{_inline_html(cell)}</td>")
                     tbody_rows.append("<tr>" + "".join(tds) + "</tr>")
                 tbody = "<tbody>" + "".join(tbody_rows) + "</tbody>"
                 parts.append("<table>" + thead + tbody + "</table>")
@@ -237,83 +266,18 @@ class HtmlConverter(Converter):
     def _escape_html(self, text: str) -> str:
         return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
-    def _render_mermaid_to_svg(self, mermaid_text: str) -> Optional[str]:
-        """Try to render mermaid diagram to SVG using mermaid-cli (mmdc) or npx.
+    def _render_inline_span_html(self, span) -> str:
+        # span is mdparser.InlineSpan
+        txt = self._escape_html(span.text)
+        if span.strike:
+            txt = f"<del>{txt}</del>"
+        if span.italic:
+            txt = f"<em>{txt}</em>"
+        if span.bold:
+            txt = f"<strong>{txt}</strong>"
+        return txt
 
-        Returns an inline SVG string, or an <img> data-uri PNG fallback, or None on failure.
-        """
-        logger = logging.getLogger("md2beauty.mermaid")
-
-        project_root = pathlib.Path(__file__).resolve().parents[1]
-        local_mmdc = project_root / "node_modules" / ".bin" / "mmdc"
-
-        mmdc_exe = shutil.which("mmdc")
-        if not mmdc_exe and local_mmdc.exists():
-            mmdc_exe = str(local_mmdc)
-
-        npx_exe = shutil.which("npx")
-
-        if not mmdc_exe and not npx_exe:
-            logger.debug("No mmdc or npx found for mermaid rendering")
-            return None
-
-        # cache by hash
-        cache_dir = project_root / ".cache" / "md2beauty"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        h = hashlib.sha256(mermaid_text.encode("utf-8")).hexdigest()
-        cached_svg = cache_dir / f"{h}.svg"
-        cached_png = cache_dir / f"{h}.png"
-        if cached_svg.exists():
-            logger.debug("Using cached mermaid svg %s", cached_svg)
-            return cached_svg.read_text(encoding="utf-8")
-        if cached_png.exists():
-            logger.debug("Using cached mermaid png %s", cached_png)
-            data = base64.b64encode(cached_png.read_bytes()).decode("ascii")
-            return f"<img src=\"data:image/png;base64,{data}\" alt=\"mermaid diagram\"/>"
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            in_path = os.path.join(tmpdir, "diagram.mmd")
-            out_svg = os.path.join(tmpdir, "diagram.svg")
-            out_png = os.path.join(tmpdir, "diagram.png")
-            with open(in_path, "w", encoding="utf-8") as f:
-                f.write(mermaid_text)
-
-            # try SVG first
-            try:
-                if mmdc_exe:
-                    cmd = [mmdc_exe, "-i", in_path, "-o", out_svg]
-                else:
-                    cmd = [npx_exe, "@mermaid-js/mermaid-cli", "-i", in_path, "-o", out_svg]
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if os.path.exists(out_svg):
-                    svg = open(out_svg, "r", encoding="utf-8").read()
-                    try:
-                        cached_svg.write_text(svg, encoding="utf-8")
-                    except Exception:
-                        logger.debug("Failed to write svg cache")
-                    return svg
-            except Exception as e:
-                logger.debug("SVG render failed: %s", e)
-
-            # try PNG fallback
-            try:
-                if mmdc_exe:
-                    cmd = [mmdc_exe, "-i", in_path, "-o", out_png]
-                else:
-                    cmd = [npx_exe, "@mermaid-js/mermaid-cli", "-i", in_path, "-o", out_png]
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if os.path.exists(out_png):
-                    png_bytes = open(out_png, "rb").read()
-                    try:
-                        cached_png.write_bytes(png_bytes)
-                    except Exception:
-                        logger.debug("Failed to write png cache")
-                    data = base64.b64encode(png_bytes).decode("ascii")
-                    return f"<img src=\"data:image/png;base64,{data}\" alt=\"mermaid diagram\"/>"
-            except Exception as e:
-                logger.debug("PNG render failed: %s", e)
-
-        return None
+    # Mermaid rendering now delegated to embeds.default_diagram_service
 
 class DocxConverter(Converter):
     """Convert Markdown to DOCX bytes using a streaming Markdown IR.
@@ -326,7 +290,17 @@ class DocxConverter(Converter):
         from docx import Document
         from docx.shared import Inches
         from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from .mdparser import parse_markdown_stream, Heading as IRHeading, Paragraph as IRParagraph, CodeBlock as IRCode, ListBlock as IRList, Image as IRImage, SvgBlock as IRSvg, Table as IRTable
+        from .mdparser import (
+            parse_markdown_stream,
+            Heading as IRHeading,
+            Paragraph as IRParagraph,
+            CodeBlock as IRCode,
+            ListBlock as IRList,
+            Image as IRImage,
+            SvgBlock as IRSvg,
+            Table as IRTable,
+            parse_inline_emphasis,
+        )
 
         document = Document()
         if self.theme and isinstance(self.theme, Theme):
@@ -339,28 +313,31 @@ class DocxConverter(Converter):
             if isinstance(block, IRHeading):
                 level = max(1, min(6, block.level))
                 try:
-                    document.add_paragraph(block.text, style=f"Heading {level}")
+                    p = document.add_paragraph(style=f"Heading {level}")
                 except Exception:
-                    document.add_paragraph(block.text)
+                    p = document.add_paragraph()
+                self._append_inline_runs_docx(p, parse_inline_emphasis(block.text))
             elif isinstance(block, IRParagraph):
-                document.add_paragraph(block.text)
+                p = document.add_paragraph()
+                self._append_inline_runs_docx(p, parse_inline_emphasis(block.text))
             elif isinstance(block, IRCode):
                 if (block.language or '').lower() == 'mermaid':
+                    rr: Optional[RenderResult] = None
                     try:
-                        img_path = self._render_mermaid_to_image(block.code)
+                        rr = default_diagram_service.render(
+                            kind="mermaid",
+                            code=block.code,
+                            preferred_formats=["png", "jpeg", "svg"],
+                        )
                     except Exception:
-                        img_path = None
-                    if img_path and os.path.exists(img_path):
+                        rr = None
+                    if rr and rr.mime.startswith("image/"):
                         try:
-                            document.add_picture(img_path, width=Inches(6))
+                            document.add_picture(rr.path, width=Inches(6))
                         except Exception:
-                            # fallback to code paragraph if image insertion fails
                             document.add_paragraph(block.code)
                         finally:
-                            try:
-                                os.unlink(img_path)
-                            except Exception:
-                                pass
+                            rr.cleanup()
                     else:
                         document.add_paragraph(block.code)
                 else:
@@ -369,9 +346,10 @@ class DocxConverter(Converter):
                 style = "List Number" if block.ordered else "List Bullet"
                 for item in block.items:
                     try:
-                        document.add_paragraph(item.text, style=style)
+                        p = document.add_paragraph(style=style)
                     except Exception:
-                        document.add_paragraph(item.text)
+                        p = document.add_paragraph()
+                    self._append_inline_runs_docx(p, parse_inline_emphasis(item.text))
             elif isinstance(block, IRImage):
                 src = block.src
                 try:
@@ -408,15 +386,28 @@ class DocxConverter(Converter):
                 cols = max(1, len(block.headers))
                 rows = 1 + len(block.rows)
                 table = document.add_table(rows=rows, cols=cols)
-                # Header row
+                # Header row with inline emphasis (force bold weight on header spans)
                 hdr_cells = table.rows[0].cells
+                from .mdparser import parse_inline_emphasis as _pie
                 for i, text in enumerate(block.headers):
                     p = hdr_cells[i].paragraphs[0]
-                    run = p.add_run(text)
-                    try:
-                        run.bold = True
-                    except Exception:
-                        pass
+                    spans = _pie(text)
+                    if spans:
+                        for s in spans:
+                            run = p.add_run(s.text)
+                            try:
+                                run.bold = True or s.bold  # header cells are bold by default
+                                run.italic = bool(s.italic)
+                                if s.strike:
+                                    run.font.strike = True
+                            except Exception:
+                                pass
+                    else:
+                        run = p.add_run(text)
+                        try:
+                            run.bold = True
+                        except Exception:
+                            pass
                     # alignment for header based on aligns if provided
                     try:
                         align = block.aligns[i] if i < len(block.aligns) else None
@@ -434,7 +425,17 @@ class DocxConverter(Converter):
                     for c_idx in range(cols):
                         val = row_vals[c_idx] if c_idx < len(row_vals) else ''
                         p = cells[c_idx].paragraphs[0]
-                        p.text = val
+                        # clear any default text
+                        if getattr(p, 'clear', None):
+                            try:
+                                p.clear()
+                            except Exception:
+                                pass
+                        spans = _pie(val)
+                        if spans:
+                            self._append_inline_runs_docx(p, spans)
+                        else:
+                            p.text = val
                         try:
                             align = block.aligns[c_idx] if c_idx < len(block.aligns) else None
                             if align == 'center':
@@ -454,65 +455,22 @@ class DocxConverter(Converter):
         import io as _io
         return self.convert_stream(_io.StringIO(md_text))
 
-    def _render_mermaid_to_image(self, mermaid_text: str) -> Optional[str]:
-        """Render mermaid text to a temporary image file (SVG preferred, PNG fallback).
+    def _append_inline_runs_docx(self, paragraph, spans):
+        try:
+            for s in spans:
+                run = paragraph.add_run(s.text)
+                if s.bold:
+                    run.bold = True
+                if s.italic:
+                    run.italic = True
+                if s.strike:
+                    run.font.strike = True
+        except Exception:
+            # Best-effort; if something goes wrong, fall back to plain text
+            if getattr(paragraph, 'add_run', None):
+                paragraph.add_run("".join(s.text for s in spans))
 
-        Returns a filesystem path to the image, or None on failure. Caller is responsible for deleting it.
-        """
-        project_root = pathlib.Path(__file__).resolve().parents[1]
-        local_mmdc = project_root / "node_modules" / ".bin" / "mmdc"
-
-        mmdc_exe = shutil.which("mmdc")
-        if not mmdc_exe and local_mmdc.exists():
-            mmdc_exe = str(local_mmdc)
-
-        npx_exe = shutil.which("npx")
-
-        if not mmdc_exe and not npx_exe:
-            return None
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            in_path = os.path.join(tmpdir, "diagram.mmd")
-            out_svg = os.path.join(tmpdir, "diagram.svg")
-            out_png = os.path.join(tmpdir, "diagram.png")
-            with open(in_path, "w", encoding="utf-8") as f:
-                f.write(mermaid_text)
-
-            # try SVG first
-            try:
-                if mmdc_exe:
-                    cmd = [mmdc_exe, "-i", in_path, "-o", out_svg]
-                else:
-                    cmd = [npx_exe, "@mermaid-js/mermaid-cli", "-i", in_path, "-o", out_svg]
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if os.path.exists(out_svg):
-                    data = open(out_svg, "rb").read()
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
-                    tmp.write(data)
-                    tmp.flush()
-                    tmp.close()
-                    return tmp.name
-            except Exception:
-                pass
-
-            # try PNG fallback
-            try:
-                if mmdc_exe:
-                    cmd = [mmdc_exe, "-i", in_path, "-o", out_png]
-                else:
-                    cmd = [npx_exe, "@mermaid-js/mermaid-cli", "-i", in_path, "-o", out_png]
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if os.path.exists(out_png):
-                    data = open(out_png, "rb").read()
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-                    tmp.write(data)
-                    tmp.flush()
-                    tmp.close()
-                    return tmp.name
-            except Exception:
-                pass
-
-        return None
+    # Per-converter Mermaid image rendering removed in favor of shared service
 
 def get_converter(format_name: str, theme: Optional[Union[str, Theme]] = None, **opts) -> Converter:
     fmt = format_name.lower()

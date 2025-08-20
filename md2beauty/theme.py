@@ -52,7 +52,13 @@ class PageMargins(BaseModel):
 
 
 class PageSettings(BaseModel):
-	type: Optional[Literal['a4', 'letter']] = None
+	# Common page presets (lowercase keys)
+	# Supports ISO A-series, selected ISO B-series, and common NA sizes
+	type: Optional[Literal[
+		'a0','a1','a2','a3','a4','a5','a6',
+		'b5','b4','b3','b2','b1','b0',
+		'letter','legal','tabloid','ledger','executive'
+	]] = None
 	width: Optional[Length] = None
 	height: Optional[Length] = None
 	orientation: Optional[Literal['portrait', 'landscape']] = None
@@ -387,13 +393,37 @@ class Theme(BaseModel):
 
 				ptype = str(page_cfg.type or "").strip().lower()
 				orientation = str(page_cfg.orientation or "").strip().lower()  # portrait|landscape
-				# Defaults from type
+				# Defaults from type (portrait values)
 				width_in: Optional[float] = None
 				height_in: Optional[float] = None
-				if ptype == "a4":
-					width_in, height_in = 210/25.4, 297/25.4  # 8.27 x 11.69
-				elif ptype == "letter":
-					width_in, height_in = 8.5, 11
+
+				# Portrait dimension map in inches
+				PAGE_INCHES = {
+					# ISO A series
+					'a0': (46.81, 33.11),  # 1189 x 841 mm
+					'a1': (33.11, 23.39),  # 841 x 594 mm
+					'a2': (23.39, 16.54),  # 594 x 420 mm
+					'a3': (16.54, 11.69),  # 420 x 297 mm
+					'a4': (11.69, 8.27),   # 297 x 210 mm
+					'a5': (8.27, 5.83),    # 210 x 148 mm
+					'a6': (5.83, 4.13),    # 148 x 105 mm
+					# ISO B series (selection)
+					'b0': (55.67, 39.37),  # 1414 x 1000 mm
+					'b1': (39.37, 27.83),  # 1000 x 707 mm
+					'b2': (27.83, 19.69),  # 707 x 500 mm
+					'b3': (19.69, 13.90),  # 500 x 353 mm
+					'b4': (13.90, 9.84),   # 353 x 250 mm
+					'b5': (9.84, 6.93),    # 250 x 176 mm
+					# North American
+					'letter': (11.0, 8.5),
+					'legal': (14.0, 8.5),
+					'tabloid': (17.0, 11.0),
+					'ledger': (11.0, 17.0),  # portrait form of ledger is tall 11x17
+					'executive': (10.5, 7.25),
+				}
+
+				if ptype in PAGE_INCHES:
+					height_in, width_in = PAGE_INCHES[ptype]  # stored as (h, w) order
 
 				# Explicit overrides
 				if (w := _to_inches(page_cfg.width)) is not None:

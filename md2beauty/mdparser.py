@@ -70,6 +70,48 @@ class Table(Block):
     rows: List[List[str]]
 
 
+# ---------------- Inline emphasis (bold/italic/strikethrough) ----------------
+
+@dataclass
+class InlineSpan:
+    text: str
+    bold: bool = False
+    italic: bool = False
+    strike: bool = False
+
+
+def parse_inline_emphasis(text: str) -> List[InlineSpan]:
+    """Parse a subset of Markdown inline emphasis markers into spans.
+
+    Supported markers:
+    - **bold** or __bold__ toggles bold
+    - *italic* or _italic_ toggles italic
+    - ~~strike~~ toggles strikethrough
+
+    This is a simple, toggle-based parser aimed for well-formed content and may
+    not handle all edge cases of full Markdown spec. It avoids allocations by
+    streaming tokens and emitting spans with current flags.
+    """
+    if not text:
+        return []
+    parts = re.split(r"(\*\*|__|~~|\*|_)", text)
+    bold = italic = strike = False
+    spans: List[InlineSpan] = []
+    for tok in parts:
+        if tok == "**" or tok == "__":
+            bold = not bold
+            continue
+        if tok == "~~":
+            strike = not strike
+            continue
+        if tok == "*" or tok == "_":
+            italic = not italic
+            continue
+        if tok:
+            spans.append(InlineSpan(text=tok, bold=bold, italic=italic, strike=strike))
+    return spans
+
+
 def parse_markdown_stream(md_text: Optional[str] = None, lines: Optional[Iterable[str]] = None) -> Iterator[Block]:
     """Streaming Markdown parser yielding IR blocks incrementally.
 
