@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md2beauty"
+version = "0.1.0"
+description = "Convert Markdown to HTML, DOCX, PPTX with theme and extension support."
+authors = [
+    { name="Your Name", email="your@email.com" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "markdown>=3.4.0",
+    "python-docx",
+    "python-pptx",
+    "pydantic>=2.0.0"
+]
+
+[project.scripts]
+md2beauty = "md2beauty.cli:main"
