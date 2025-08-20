@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 import hashlib
 import os
 import shutil
@@ -41,6 +41,17 @@ class AssetRenderer:
 
     def can_render(self, kind: str) -> bool:
         return kind.lower() == self.kind.lower()
+
+    def is_available(self) -> bool:
+        """Whether this renderer has the necessary tooling to operate.
+
+        Default to True; concrete implementations can override.
+        """
+        return True
+
+    def install_guidance(self) -> Optional[str]:
+        """Optional human-readable guidance on how to enable this renderer."""
+        return None
 
     def render(
         self,
@@ -87,6 +98,23 @@ class DiagramService:
             return None
         return r.render(code=code, attrs=attrs, preferred_formats=preferred_formats, config=config)
 
+    def has(self, kind: str) -> bool:
+        """Return True if a renderer exists and is available for the given kind."""
+        r = self._registry.get(kind)
+        return bool(r and r.is_available())
+
+    def guidance(self, kind: str) -> Optional[str]:
+        r = self._registry.get(kind)
+        return r.install_guidance() if r else None
+
+
+class MermaidUnavailableError(RuntimeError):
+    """Raised when Mermaid rendering is requested but tooling is unavailable."""
+
+    def __init__(self, guidance: str) -> None:
+        super().__init__(guidance)
+        self.guidance = guidance
+
 
 class MermaidRenderer(AssetRenderer):
     kind = "mermaid"
@@ -104,6 +132,18 @@ class MermaidRenderer(AssetRenderer):
             mmdc_exe = str(local_mmdc)
         self._mmdc = mmdc_exe
         self._npx = shutil.which("npx")
+        self._available = bool(self._mmdc or self._npx)
+
+    def is_available(self) -> bool:  # type: ignore[override]
+        return self._available
+
+    def install_guidance(self) -> Optional[str]:  # type: ignore[override]
+        return (
+            "Mermaid CLI not found. To enable Mermaid diagram rendering, install Node.js and then either:\n"
+            "  - Global install: npm i -g @mermaid-js/mermaid-cli\n"
+            "  - Or use npx (no global install): npx @mermaid-js/mermaid-cli -i input.mmd -o output.svg\n"
+            "Verify with: node -v && npm -v. Set MD2BEAUTY_STRICT_DIAGRAMS=1 to fail if unavailable."
+        )
 
     def _hash(self, code: str, attrs: Optional[Dict[str, Any]]) -> str:
         h = hashlib.sha256()
@@ -122,7 +162,16 @@ class MermaidRenderer(AssetRenderer):
         config: Optional[Dict[str, Any]] = None,
     ) -> Optional[RenderResult]:
         # Ensure we have a way to render
-        if not self._mmdc and not self._npx:
+        if not self._available:
+            strict = False
+            if config and isinstance(config, dict):
+                strict = bool(config.get("strict_diagrams"))
+            if not strict:
+                # Env var override allows strict mode without threading config
+                import os as _os
+                strict = _os.getenv("MD2BEAUTY_STRICT_DIAGRAMS", "").lower() in ("1", "true", "yes", "on")
+            if strict:
+                raise MermaidUnavailableError(self.install_guidance() or "Mermaid CLI not available")
             return None
 
         preferred = [f.lower() for f in (preferred_formats or ["svg", "png"])]
