@@ -318,14 +318,15 @@ class HtmlConverter(Converter):
 class DocxConverter(Converter):
     """Convert Markdown to DOCX bytes using a streaming Markdown IR.
 
-    Supported blocks: headings, paragraphs, code blocks, lists, images, inline SVG.
-    Mermaid is handled upstream by HtmlConverter; no special handling here.
+    Supported blocks: headings, paragraphs, code blocks, lists, images, tables, inline SVG.
+    Mermaid code blocks are rendered to images (SVG preferred, PNG fallback) via mermaid-cli.
     """
 
     def convert_stream(self, lines: Iterable[str]) -> bytes:
         from docx import Document
         from docx.shared import Inches
-        from .mdparser import parse_markdown_stream, Heading as IRHeading, Paragraph as IRParagraph, CodeBlock as IRCode, ListBlock as IRList, Image as IRImage, SvgBlock as IRSvg
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from .mdparser import parse_markdown_stream, Heading as IRHeading, Paragraph as IRParagraph, CodeBlock as IRCode, ListBlock as IRList, Image as IRImage, SvgBlock as IRSvg, Table as IRTable
 
         document = Document()
         if self.theme and isinstance(self.theme, Theme):
@@ -344,7 +345,26 @@ class DocxConverter(Converter):
             elif isinstance(block, IRParagraph):
                 document.add_paragraph(block.text)
             elif isinstance(block, IRCode):
-                document.add_paragraph(block.code)
+                if (block.language or '').lower() == 'mermaid':
+                    try:
+                        img_path = self._render_mermaid_to_image(block.code)
+                    except Exception:
+                        img_path = None
+                    if img_path and os.path.exists(img_path):
+                        try:
+                            document.add_picture(img_path, width=Inches(6))
+                        except Exception:
+                            # fallback to code paragraph if image insertion fails
+                            document.add_paragraph(block.code)
+                        finally:
+                            try:
+                                os.unlink(img_path)
+                            except Exception:
+                                pass
+                    else:
+                        document.add_paragraph(block.code)
+                else:
+                    document.add_paragraph(block.code)
             elif isinstance(block, IRList):
                 style = "List Number" if block.ordered else "List Bullet"
                 for item in block.items:
@@ -383,6 +403,48 @@ class DocxConverter(Converter):
                     os.unlink(tmp.name)
                 except Exception:
                     pass
+            elif isinstance(block, IRTable):
+                # Create a table with header row + body rows
+                cols = max(1, len(block.headers))
+                rows = 1 + len(block.rows)
+                table = document.add_table(rows=rows, cols=cols)
+                # Header row
+                hdr_cells = table.rows[0].cells
+                for i, text in enumerate(block.headers):
+                    p = hdr_cells[i].paragraphs[0]
+                    run = p.add_run(text)
+                    try:
+                        run.bold = True
+                    except Exception:
+                        pass
+                    # alignment for header based on aligns if provided
+                    try:
+                        align = block.aligns[i] if i < len(block.aligns) else None
+                        if align == 'center':
+                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        elif align == 'right':
+                            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        elif align == 'left':
+                            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    except Exception:
+                        pass
+                # Body rows
+                for r_idx, row_vals in enumerate(block.rows, start=1):
+                    cells = table.rows[r_idx].cells
+                    for c_idx in range(cols):
+                        val = row_vals[c_idx] if c_idx < len(row_vals) else ''
+                        p = cells[c_idx].paragraphs[0]
+                        p.text = val
+                        try:
+                            align = block.aligns[c_idx] if c_idx < len(block.aligns) else None
+                            if align == 'center':
+                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            elif align == 'right':
+                                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            elif align == 'left':
+                                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                        except Exception:
+                            pass
 
         bio = io.BytesIO()
         document.save(bio)
@@ -391,6 +453,66 @@ class DocxConverter(Converter):
     def convert(self, md_text: str) -> bytes:  # type: ignore[override]
         import io as _io
         return self.convert_stream(_io.StringIO(md_text))
+
+    def _render_mermaid_to_image(self, mermaid_text: str) -> Optional[str]:
+        """Render mermaid text to a temporary image file (SVG preferred, PNG fallback).
+
+        Returns a filesystem path to the image, or None on failure. Caller is responsible for deleting it.
+        """
+        project_root = pathlib.Path(__file__).resolve().parents[1]
+        local_mmdc = project_root / "node_modules" / ".bin" / "mmdc"
+
+        mmdc_exe = shutil.which("mmdc")
+        if not mmdc_exe and local_mmdc.exists():
+            mmdc_exe = str(local_mmdc)
+
+        npx_exe = shutil.which("npx")
+
+        if not mmdc_exe and not npx_exe:
+            return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            in_path = os.path.join(tmpdir, "diagram.mmd")
+            out_svg = os.path.join(tmpdir, "diagram.svg")
+            out_png = os.path.join(tmpdir, "diagram.png")
+            with open(in_path, "w", encoding="utf-8") as f:
+                f.write(mermaid_text)
+
+            # try SVG first
+            try:
+                if mmdc_exe:
+                    cmd = [mmdc_exe, "-i", in_path, "-o", out_svg]
+                else:
+                    cmd = [npx_exe, "@mermaid-js/mermaid-cli", "-i", in_path, "-o", out_svg]
+                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if os.path.exists(out_svg):
+                    data = open(out_svg, "rb").read()
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
+                    tmp.write(data)
+                    tmp.flush()
+                    tmp.close()
+                    return tmp.name
+            except Exception:
+                pass
+
+            # try PNG fallback
+            try:
+                if mmdc_exe:
+                    cmd = [mmdc_exe, "-i", in_path, "-o", out_png]
+                else:
+                    cmd = [npx_exe, "@mermaid-js/mermaid-cli", "-i", in_path, "-o", out_png]
+                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if os.path.exists(out_png):
+                    data = open(out_png, "rb").read()
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                    tmp.write(data)
+                    tmp.flush()
+                    tmp.close()
+                    return tmp.name
+            except Exception:
+                pass
+
+        return None
 
 def get_converter(format_name: str, theme: Optional[Union[str, Theme]] = None, **opts) -> Converter:
     fmt = format_name.lower()
