@@ -1,34 +1,56 @@
-# md-2-beauty
+# md2beauty
 
-**md-2-beauty** is an open-source tool designed to convert Markdown files into beautiful and professional formats such as HTML, DOCX, PPTX, and PDF. It supports themes, Markdown extensions, and advanced diagram rendering using tools like Mermaid.
+**md2beauty** is an open-source tool designed to convert Markdown files into beautiful and professional formats such as HTML, DOCX, PPTX, and PDF. It supports themes and advanced diagram rendering using tools like Mermaid.
+
+## Purpose and Scope
+
+The purpose of this library is to be able to "render" markdown document beautifully in a variety of `legacy` formats such as Microsoft Word (.docx), Microsoft PowerPoint (.pptx) and PDF.
 
 ## Features
 - **Multi-format Conversion**: Convert Markdown to HTML, DOCX, PPTX, and PDF.
 - **Theme Support**: Apply custom themes to your output formats for a polished look.
 - **Diagram Rendering**: Supports JS-based diagrams like Mermaid for visual content.
-- **Markdown Extensions**: Fully compatible with Python's `markdown` library extensions.
 - **CLI Integration**: Easy-to-use command-line interface for seamless conversions.
+- **Beautiful out of the box:** Avoid having to tweak the files afterwards enabling a fast and easy use.
 
 ## Installation
-1. Clone the repository:
-   ```bash
-   git clone git@github.com:creadri/md2beauty.git
-   cd md2beauty
-   ```
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   playwright install
-   ```
+
+### Using PIP
+
+For all output formats:
+
+```bash
+pip install md2beauty[all]
+```
+
+For specific output format only:
+
+```bash
+pip install md2beauty[docx,pptx,pdf,html]
+```
+> Use only the ones you are interested in.
+
+### Other dependencies installation
+
+In order to be able to render mermaid diagrams correctly, I didn't find another way than to use nodejs in order to render different parts.
+
+It's optional but required if you need mermaid support:
+
+```
+npm install mermaid-js
+```
+
 
 ## Usage
 Convert Markdown files using the CLI:
 ```bash
-python cli.py -f <format> -i <input_file> -o <output_file>
+python -m md2beauty.cli -f <format> -i <input_file> -o <output_file>
 ```
 - `<format>`: Output format (`html`, `docx`, `pptx`, `pdf`).
+  - Default is `html`
 - `<input_file>`: Path to the Markdown file.
 - `<output_file>`: Path to save the converted file.
+  - Optional, if not present, base name of `input_file` with `format` as an extension.
 
 ### Example
 Convert a Markdown file to PDF:
@@ -47,6 +69,19 @@ python cli.py -f pdf -i example.md -o example.pdf
 - [ ] Prepare for PIP packaging and dividing into output and render features to lower dependencies depending on needs
 - [ ] Advanced customization options
 - [ ] Plugin system for additional formats
+
+## Other Known Libraries:
+| Name              | Description                                                                 | License Type      | Main Language |
+|-------------------|-----------------------------------------------------------------------------|-------------------|---------------|
+| Pandoc            | Universal document converter supporting Markdown to many formats (HTML, DOCX, PDF, etc.) | GPL              | Haskell       |
+| Marp              | Markdown presentation tool converting Markdown to slides (HTML, PPTX, PDF)   | MIT               | TypeScript    |
+| Typora            | Markdown editor with export options to DOCX, PDF, and HTML                   | Proprietary       | JavaScript    |
+| Grip              | Preview GitHub-flavored Markdown with export to HTML                         | MIT               | Python        |
+| md-to-pdf         | Node.js tool to convert Markdown files directly to PDF                       | MIT               | JavaScript    |
+| markdown-pdf      | Node.js utility for converting Markdown to PDF                               | MIT               | JavaScript    |
+| remarkable        | Markdown parser and compiler with plugins for various output formats         | MIT               | JavaScript    |
+| reveal-md         | Create reveal.js presentations from Markdown files                           | MIT               | JavaScript    |
+| Jupyter nbconvert | Converts Jupyter notebooks (Markdown + code) to HTML, PDF, and more          | BSD               | Python        |
 
 ## Contributing
 Contributions are welcome! Please fork the repository and submit a pull request.

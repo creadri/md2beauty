@@ -12,14 +12,33 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "python-docx",
-    "python-pptx",
     "pydantic>=2.0.0",
-    "Pygments>=2.15.0"
 ]
 
 [project.scripts]
 md2beauty = "md2beauty.cli:main"
+
+[project.optional-dependencies]
+html = [
+    "Pygments>=2.15.0",
+]
+docx = [
+    "python-docx",
+    "Pygments>=2.15.0",
+]
+pptx = [
+    "python-pptx",
+    "Pygments>=2.15.0",
+]
+pdf = [
+    "playwright",
+]
+all = [
+    "Pygments>=2.15.0",
+    "python-docx",
+    "python-pptx",
+    "playwright",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q --cov=md2beauty --cov-report=term-missing --cov-report=xml:coverage.xml"
