@@ -20,7 +20,7 @@ def _available_formats():
 
 def test_convert_all_samples_to_available_formats(tmp_path):
     if not SAMPLES_DIR.exists():
-        pytest.skip("samples directory missing")
+        pytest.skip(f"samples directory {SAMPLES_DIR} missing")
     fmts = _available_formats()
     assert fmts, "no available formats detected"
 

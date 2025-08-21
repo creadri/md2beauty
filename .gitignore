@@ -9,6 +9,7 @@ dist/
 *.docx
 *.pptx
 *.html
+*.pdf
 
 .vscode/
 .pytest_cache/

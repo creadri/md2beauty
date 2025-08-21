@@ -478,5 +478,256 @@ def get_converter(format_name: str, theme: Optional[Union[str, Theme]] = None, *
         return HtmlConverter(theme)
     if fmt == "docx":
         return DocxConverter(theme)
-    # Placeholder for pptx converter
+    if fmt == "pptx":
+        return PptxConverter(theme)
+    if fmt == "pdf":
+        return PdfConverter(theme)
     raise NotImplementedError(f"No converter implemented for format: {format_name}")
+
+
+class PptxConverter(Converter):
+    """Convert Markdown into a simple PPTX presentation.
+
+    Strategy:
+    - H1/H2 start a new slide (Title and Content), title set from heading text.
+    - Paragraphs and list items go into the slide's content text frame as bullets.
+    - Code blocks are added as monospace text in a separate textbox.
+    - Mermaid blocks are rendered via DiagramService and inserted as images when available.
+    - Images are fetched via MediaFetcher and inserted; cleaned up if temporary.
+    - Tables are added using python-pptx table shapes.
+    """
+
+    def convert_stream(self, lines: Iterable[str]) -> bytes:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
+        from pptx.enum.text import PP_ALIGN
+        from .mdparser import (
+            parse_markdown_stream,
+            Heading as IRHeading,
+            Paragraph as IRParagraph,
+            CodeBlock as IRCode,
+            ListBlock as IRList,
+            Image as IRImage,
+            SvgBlock as IRSvg,
+            Table as IRTable,
+            parse_inline_emphasis,
+        )
+
+        pres = Presentation()
+        # Apply theme styles best-effort
+        if self.theme and isinstance(self.theme, Theme):
+            try:
+                self.theme.apply_to_pptx(pres)
+            except Exception:
+                pass
+
+        # Helpers to manage slide/content
+        def new_content_slide(title_text: str = ""):
+            layout_idx = 1 if len(pres.slide_layouts) > 1 else 0  # Title and Content fallback to Title
+            slide = pres.slides.add_slide(pres.slide_layouts[layout_idx])
+            try:
+                if slide.shapes.title is not None and title_text:
+                    slide.shapes.title.text = title_text
+            except Exception:
+                pass
+            # Find content placeholder (usually index 1)
+            content_tf = None
+            try:
+                for shape in slide.shapes:
+                    if getattr(shape, 'has_text_frame', False) and shape.text_frame is not None and shape is not slide.shapes.title:
+                        content_tf = shape.text_frame
+                        break
+            except Exception:
+                content_tf = None
+            return slide, content_tf
+
+        def add_text_paragraph(tf, text: str, level: int = 0):
+            if tf is None:
+                return
+            # If frame already has default empty paragraph, reuse it if empty
+            if not tf.paragraphs:
+                p = tf.add_paragraph()
+            else:
+                p = tf.paragraphs[-1]
+                if p.text:
+                    p = tf.add_paragraph()
+            p.level = max(0, min(5, level))
+            # Inline emphasis into runs
+            spans = parse_inline_emphasis(text)
+            # clear any auto text in paragraph
+            try:
+                if getattr(p, 'clear', None):
+                    p.clear()
+            except Exception:
+                pass
+            if not spans:
+                p.text = text
+            else:
+                for s in spans:
+                    run = p.add_run()
+                    run.text = s.text
+                    try:
+                        if s.bold:
+                            run.font.bold = True
+                        if s.italic:
+                            run.font.italic = True
+                        if s.strike:
+                            run.font.strike = True
+                    except Exception:
+                        pass
+
+        current_slide = None
+        current_tf = None
+        title_set = False
+
+        for block in parse_markdown_stream(lines=lines):
+            if isinstance(block, IRHeading):
+                lvl = max(1, min(6, block.level))
+                if lvl <= 2:
+                    current_slide, current_tf = new_content_slide(block.text)
+                    title_set = True
+                else:
+                    if current_slide is None:
+                        current_slide, current_tf = new_content_slide()
+                    # Add sub-heading as bold line
+                    add_text_paragraph(current_tf, f"**{block.text}**", level=0)
+            elif isinstance(block, IRParagraph):
+                if current_slide is None:
+                    current_slide, current_tf = new_content_slide("Document")
+                add_text_paragraph(current_tf, block.text, level=0)
+            elif isinstance(block, IRList):
+                if current_slide is None:
+                    current_slide, current_tf = new_content_slide("Document")
+                for item in block.items:
+                    add_text_paragraph(current_tf, item.text, level=1 if not block.ordered else 0)
+            elif isinstance(block, IRCode):
+                # Mermaid rendering to image if possible
+                if (block.language or '').lower() == 'mermaid':
+                    rr: Optional[RenderResult] = None
+                    try:
+                        rr = default_diagram_service.render(
+                            kind="mermaid", code=block.code, preferred_formats=["png", "jpeg", "svg"],
+                        )
+                    except Exception:
+                        rr = None
+                    if rr and rr.mime.startswith("image/"):
+                        if current_slide is None:
+                            current_slide, current_tf = new_content_slide("Diagram")
+                        try:
+                            left = Inches(1)
+                            top = Inches(1.5)
+                            width = Inches(8)
+                            current_slide.shapes.add_picture(rr.path, left, top, width=width)
+                        except Exception:
+                            # fallback: add code text
+                            add_text_paragraph(current_tf, block.code, level=0)
+                        finally:
+                            rr.cleanup()
+                    else:
+                        if current_slide is None:
+                            current_slide, current_tf = new_content_slide("Code")
+                        add_text_paragraph(current_tf, block.code, level=0)
+                else:
+                    if current_slide is None:
+                        current_slide, current_tf = new_content_slide("Code")
+                    # Add as monospace in a textbox
+                    try:
+                        # Create a textbox
+                        left, top, width, height = Inches(1), Inches(1.5), Inches(8), Inches(1.5)
+                        tx_box = current_slide.shapes.add_textbox(left, top, width, height)
+                        tf = tx_box.text_frame
+                        tf.word_wrap = True
+                        add_text_paragraph(tf, block.code, level=0)
+                    except Exception:
+                        add_text_paragraph(current_tf, block.code, level=0)
+            elif isinstance(block, IRImage):
+                try:
+                    from .media import MediaFetcher
+                    if current_slide is None:
+                        current_slide, current_tf = new_content_slide("Image")
+                    fetcher = MediaFetcher()
+                    res = fetcher.fetch(block.src)
+                    if res:
+                        try:
+                            left, top, width = Inches(1), Inches(1.5), Inches(8)
+                            current_slide.shapes.add_picture(res.path, left, top, width=width)
+                        except Exception:
+                            pass
+                        if not res.cached:
+                            try:
+                                os.unlink(res.path)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            elif isinstance(block, IRSvg):
+                # python-pptx doesn't support SVG directly; add a note
+                if current_slide is None:
+                    current_slide, current_tf = new_content_slide("Diagram")
+                add_text_paragraph(current_tf, "[SVG diagram not supported in PPTX]", level=0)
+            elif isinstance(block, IRTable):
+                # Add a simple table on a new or current slide
+                if current_slide is None:
+                    current_slide, current_tf = new_content_slide("Table")
+                try:
+                    rows = 1 + len(block.rows)
+                    cols = max(1, len(block.headers))
+                    left, top, width, height = Inches(0.75), Inches(1.5), Inches(9), Inches(3)
+                    table_shape = current_slide.shapes.add_table(rows, cols, left, top, width, height)
+                    table = table_shape.table
+                    # headers
+                    for c in range(cols):
+                        txt = block.headers[c] if c < len(block.headers) else ''
+                        cell = table.cell(0, c)
+                        cell.text = txt
+                    # body
+                    for r_idx, row_vals in enumerate(block.rows, start=1):
+                        for c in range(cols):
+                            val = row_vals[c] if c < len(row_vals) else ''
+                            table.cell(r_idx, c).text = val
+                except Exception:
+                    add_text_paragraph(current_tf, "[Table omitted due to PPTX error]", level=0)
+
+        # If nothing was added, ensure one slide exists
+        if len(pres.slides) == 0:
+            current_slide, current_tf = new_content_slide("Document")
+            add_text_paragraph(current_tf, "(Empty)", level=0)
+
+        bio = io.BytesIO()
+        pres.save(bio)
+        return bio.getvalue()
+
+
+class PdfConverter(Converter):
+    """Convert Markdown to PDF using Playwright (Chromium) to render HTML to PDF.
+
+    Requirements: playwright installed and Chromium downloaded.
+    If Playwright is not available, raise a RuntimeError with install guidance.
+    """
+
+    def convert_stream(self, lines: Iterable[str]) -> bytes:
+        # Render HTML first for consistent theming and assets
+        html_bytes = HtmlConverter(self.theme).convert_stream(lines)
+        html_str = html_bytes.decode("utf-8", errors="replace")
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore
+        except Exception:
+            guidance = (
+                "Playwright is not installed. To enable PDF export, run:\n"
+                "  pip install playwright\n"
+                "  python -m playwright install chromium\n"
+                "This uses a headless Chromium to print HTML to PDF with full CSS/SVG support."
+            )
+            raise RuntimeError(guidance)
+
+        base_url = f"file://{os.getcwd().rstrip('/')}/"
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])  # --no-sandbox for container CI
+            context = browser.new_context()
+            page = context.new_page()
+            page.set_content(html_str, wait_until="load", base_url=base_url)
+            # prefer_css_page_size honors @page size from theme CSS
+            pdf_bytes = page.pdf(print_background=True, prefer_css_page_size=True)
+            context.close()
+            browser.close()
+        return pdf_bytes
