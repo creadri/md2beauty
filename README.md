@@ -71,6 +71,7 @@ python cli.py -f pdf -i example.md -o example.pdf
 - [ ] Plugin system for additional formats
 
 ## Other Known Libraries:
+
 | Name              | Description                                                                 | License Type      | Main Language |
 |-------------------|-----------------------------------------------------------------------------|-------------------|---------------|
 | Pandoc            | Universal document converter supporting Markdown to many formats (HTML, DOCX, PDF, etc.) | GPL              | Haskell       |
