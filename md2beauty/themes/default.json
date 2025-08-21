@@ -97,6 +97,7 @@
   },
   "formats": {
     "html": {
+      "pygments_style": "default",
       "page": {
         "type": "a4",
         "margins": {
@@ -110,10 +111,13 @@
         "h1": { "font-size": "26pt" },
         "h2": { "font-size": "20pt" },
         "h3": { "font-size": "16pt" },
-        "a": { "color": "#2563eb" }
+        "a": { "color": "#2563eb" },
+        "pre": { "background-color": "#f6f8fa" },
+        "code": { "background-color": "#f6f8fa" }
       }
     },
     "docx": {
+      "pygments_style": "default",
       "page": {
         "type": "a4",
         "margins": {
@@ -124,15 +128,20 @@
         }
       },
       "styles": {
-        "code": { "font-family": "Consolas, monospace", "font-size": "10pt" }
+        "code": { "font-family": "Consolas, monospace", "font-size": "10pt", "background-color": "#f6f8fa" },
+        "pre": { "background-color": "#f6f8fa" }
       }
     },
     "pptx": {
+      "pygments_style": "default",
       "styles": {
         "h1": { "font-size": "32pt" },
         "h2": { "font-size": "24pt" },
-        "p": { "font-size": "18pt" }
+        "p": { "font-size": "18pt" },
+        "code": { "background-color": "#f6f8fa" },
+        "pre": { "background-color": "#f6f8fa" }
       }
     }
-  }
+  },
+  "pygments_style": "monokai"
 }

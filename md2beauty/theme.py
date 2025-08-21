@@ -68,6 +68,8 @@ class PageSettings(BaseModel):
 class FormatConfig(BaseModel):
 	styles: Dict[str, StyleProps] = Field(default_factory=dict)
 	page: Optional[PageSettings] = None
+	# Optional Pygments style name for HTML code highlighting (e.g., "default", "monokai", "friendly")
+	pygments_style: Optional[str] = None
 
 
 class Theme(BaseModel):
@@ -83,6 +85,8 @@ class Theme(BaseModel):
 	styles: Dict[str, StyleProps] = Field(default_factory=dict)
 	formats: Dict[str, FormatConfig] = Field(default_factory=dict)
 	meta: Dict[str, Any] = Field(default_factory=dict)
+	# Optional global Pygments style used as a fallback for all formats
+	pygments_style: Optional[str] = None
 	# Optional page settings (e.g., page type and margins)
 	# Example:
 	# page = {
@@ -142,7 +146,7 @@ class Theme(BaseModel):
 		if isinstance(formats, dict):
 			new_formats: Dict[str, Any] = {}
 			for fmt_name, fmt_val in formats.items():
-				if isinstance(fmt_val, dict) and ('styles' in fmt_val or 'page' in fmt_val):
+				if isinstance(fmt_val, dict) and ('styles' in fmt_val or 'page' in fmt_val or 'pygments_style' in fmt_val):
 					new_formats[fmt_name] = fmt_val
 				elif isinstance(fmt_val, dict):
 					# assume it's a selector->props map

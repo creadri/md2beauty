@@ -62,6 +62,9 @@ class HtmlConverter(Converter):
         )
         title_text: Optional[str] = None
 
+        # Track whether we used Pygments so we can inject CSS once
+        pygments_css: Optional[str] = None
+
         for block in parse_markdown_stream(lines=lines):
             if isinstance(block, IRHeading):
                 lvl = max(1, min(6, block.level))
@@ -102,7 +105,47 @@ class HtmlConverter(Converter):
                     else:
                         parts.append(self._wrap_code_block(block.code, 'mermaid'))
                 else:
-                    parts.append(f"<pre><code>{self._escape_html(block.code)}</code></pre>")
+                    # Try Pygments server-side highlighting
+                    lang = (block.language or '').strip()
+                    highlighted_html: Optional[str] = None
+                    if lang:
+                        try:
+                            from pygments import highlight  # type: ignore
+                            from pygments.lexers import get_lexer_by_name  # type: ignore
+                            from pygments.formatters import HtmlFormatter  # type: ignore
+                            lexer = None
+                            try:
+                                lexer = get_lexer_by_name(lang)
+                            except Exception:
+                                lexer = get_lexer_by_name('text')
+                            # Allow theme to choose a Pygments style via Theme.formats['html'].pygments_style
+                            style_name = None
+                            try:
+                                if isinstance(self.theme, Theme):
+                                    html_fmt = self.theme.formats.get('html') if isinstance(self.theme.formats, dict) else None
+                                    if html_fmt and getattr(html_fmt, 'pygments_style', None):
+                                        style_name = html_fmt.pygments_style  # type: ignore[attr-defined]
+                                    if not style_name and getattr(self.theme, 'pygments_style', None):
+                                        style_name = self.theme.pygments_style  # type: ignore[attr-defined]
+                            except Exception:
+                                style_name = None
+                            if style_name:
+                                try:
+                                    formatter = HtmlFormatter(nowrap=False, cssclass="highlight", style=style_name)
+                                except Exception:
+                                    formatter = HtmlFormatter(nowrap=False, cssclass="highlight")
+                            else:
+                                formatter = HtmlFormatter(nowrap=False, cssclass="highlight")
+                            highlighted_html = highlight(block.code, lexer, formatter)
+                            # Capture CSS once
+                            if pygments_css is None:
+                                pygments_css = formatter.get_style_defs('.highlight')
+                        except Exception:
+                            highlighted_html = None
+                    if highlighted_html:
+                        parts.append(highlighted_html)
+                    else:
+                        parts.append(f"<pre><code class=\"language-{self._escape_html(lang or 'text')}\">{self._escape_html(block.code)}</code></pre>")
             elif isinstance(block, IRList):
                 tag = 'ol' if block.ordered else 'ul'
                 parts.append(f"<{tag}>")
@@ -217,6 +260,29 @@ class HtmlConverter(Converter):
             css_blocks.append(page_css)
         if container_css:
             css_blocks.append(container_css)
+
+        # Append Pygments CSS if we used highlighting
+        if pygments_css:
+            css_blocks.append(pygments_css)
+        # If theme defines a background-color for code/pre, also force it on .highlight wrappers
+        code_bg: Optional[str] = None
+        if isinstance(self.theme, Theme):
+            try:
+                # Prefer format-specific, then base
+                st = None
+                html_fmt = self.theme.formats.get('html') if isinstance(self.theme.formats, dict) else None
+                if html_fmt and hasattr(html_fmt, 'styles'):
+                    st = (html_fmt.styles.get('pre') or html_fmt.styles.get('code'))
+                if not st:
+                    st = (self.theme.styles.get('pre') or self.theme.styles.get('code'))
+                if st and getattr(st, 'background_color', None):
+                    code_bg = str(st.background_color)
+            except Exception:
+                code_bg = None
+        if code_bg:
+            css_blocks.append(
+                ".highlight { background: %s !important; }\n.highlight pre { background: %s !important; }" % (code_bg, code_bg)
+            )
 
         css_text = "\n\n".join(css_blocks) if css_blocks else ""
 
@@ -341,7 +407,108 @@ class DocxConverter(Converter):
                     else:
                         document.add_paragraph(block.code)
                 else:
-                    document.add_paragraph(block.code)
+                    # Attempt Pygments highlighting for DOCX when a language is specified
+                    lang = (block.language or '').strip()
+                    used_highlight = False
+                    if lang:
+                        try:
+                            from pygments import lex  # type: ignore
+                            from pygments.lexers import get_lexer_by_name  # type: ignore
+                            from pygments.styles import get_style_by_name  # type: ignore
+                            from pygments.token import Token  # type: ignore
+                            # Choose style from theme if set
+                            style_name = None
+                            if isinstance(self.theme, Theme):
+                                fmt = self.theme.formats.get('docx') if isinstance(self.theme.formats, dict) else None
+                                if fmt and getattr(fmt, 'pygments_style', None):
+                                    style_name = fmt.pygments_style  # type: ignore[attr-defined]
+                                if not style_name and getattr(self.theme, 'pygments_style', None):
+                                    style_name = self.theme.pygments_style  # type: ignore[attr-defined]
+                            style = get_style_by_name(style_name) if style_name else get_style_by_name('default')
+                            lexer = get_lexer_by_name(lang)
+                            p = document.add_paragraph()
+                            # Apply background shading from theme if defined
+                            try:
+                                code_bg = None
+                                if isinstance(self.theme, Theme):
+                                    fmt = self.theme.formats.get('docx') if isinstance(self.theme.formats, dict) else None
+                                    st = None
+                                    if fmt and hasattr(fmt, 'styles'):
+                                        st = (fmt.styles.get('pre') or fmt.styles.get('code'))
+                                    if not st:
+                                        st = (self.theme.styles.get('pre') or self.theme.styles.get('code'))
+                                    if st and getattr(st, 'background_color', None):
+                                        code_bg = str(st.background_color)
+                                if code_bg:
+                                    r = int(code_bg.lstrip('#')[0:2], 16); g = int(code_bg.lstrip('#')[2:4], 16); b = int(code_bg.lstrip('#')[4:6], 16)
+                                    # Best-effort: use paragraph shading via XML
+                                    p._element.get_or_add_pPr().get_or_add_shd().val = 'clear'
+                                    p._element.get_or_add_pPr().get_or_add_shd().color = 'auto'
+                                    p._element.get_or_add_pPr().get_or_add_shd().fill = f"{r:02X}{g:02X}{b:02X}"
+                            except Exception:
+                                pass
+                            for ttype, value in lex(block.code, lexer):
+                                if not value:
+                                    continue
+                                # Resolve nearest style in hierarchy
+                                tt = ttype
+                                while tt and tt not in style.styles:
+                                    tt = tt.parent
+                                style_str = style.styles.get(tt, '')
+                                bold = 'bold' in style_str
+                                italic = 'italic' in style_str
+                                color = None
+                                m = re.search(r"#([0-9a-fA-F]{6})", style_str)
+                                if m:
+                                    color = m.group(1)
+                                parts_txt = value.split('\n')
+                                for i, seg in enumerate(parts_txt):
+                                    if seg:
+                                        run = p.add_run(seg)
+                                        try:
+                                            run.font.name = 'Courier New'
+                                        except Exception:
+                                            pass
+                                        if bold:
+                                            run.bold = True
+                                        if italic:
+                                            run.italic = True
+                                        if color:
+                                            try:
+                                                from docx.shared import RGBColor  # type: ignore
+                                                r = int(color[0:2], 16); g = int(color[2:4], 16); b = int(color[4:6], 16)
+                                                run.font.color.rgb = RGBColor(r, g, b)
+                                            except Exception:
+                                                pass
+                                    if i < len(parts_txt) - 1:
+                                        try:
+                                            p.add_run().add_break()
+                                        except Exception:
+                                            pass
+                            used_highlight = True
+                        except Exception:
+                            used_highlight = False
+                    if not used_highlight:
+                        p = document.add_paragraph(block.code)
+                        # Apply background if configured
+                        try:
+                            code_bg = None
+                            if isinstance(self.theme, Theme):
+                                fmt = self.theme.formats.get('docx') if isinstance(self.theme.formats, dict) else None
+                                st = None
+                                if fmt and hasattr(fmt, 'styles'):
+                                    st = (fmt.styles.get('pre') or fmt.styles.get('code'))
+                                if not st:
+                                    st = (self.theme.styles.get('pre') or self.theme.styles.get('code'))
+                                if st and getattr(st, 'background_color', None):
+                                    code_bg = str(st.background_color)
+                            if code_bg:
+                                r = int(code_bg.lstrip('#')[0:2], 16); g = int(code_bg.lstrip('#')[2:4], 16); b = int(code_bg.lstrip('#')[4:6], 16)
+                                p._element.get_or_add_pPr().get_or_add_shd().val = 'clear'
+                                p._element.get_or_add_pPr().get_or_add_shd().color = 'auto'
+                                p._element.get_or_add_pPr().get_or_add_shd().fill = f"{r:02X}{g:02X}{b:02X}"
+                        except Exception:
+                            pass
             elif isinstance(block, IRList):
                 style = "List Number" if block.ordered else "List Bullet"
                 for item in block.items:
@@ -630,14 +797,98 @@ class PptxConverter(Converter):
                 else:
                     if current_slide is None:
                         current_slide, current_tf = new_content_slide("Code")
-                    # Add as monospace in a textbox
+                    # Add as monospace in a textbox with simple Pygments colors if available
                     try:
-                        # Create a textbox
-                        left, top, width, height = Inches(1), Inches(1.5), Inches(8), Inches(1.5)
+                        left, top, width, height = Inches(1), Inches(1.5), Inches(8), Inches(2.5)
                         tx_box = current_slide.shapes.add_textbox(left, top, width, height)
+                        # Apply background color from theme to textbox fill if defined
+                        try:
+                            code_bg = None
+                            if isinstance(self.theme, Theme):
+                                fmt = self.theme.formats.get('pptx') if isinstance(self.theme.formats, dict) else None
+                                st = None
+                                if fmt and hasattr(fmt, 'styles'):
+                                    st = (fmt.styles.get('pre') or fmt.styles.get('code'))
+                                if not st:
+                                    st = (self.theme.styles.get('pre') or self.theme.styles.get('code'))
+                                if st and getattr(st, 'background_color', None):
+                                    code_bg = str(st.background_color)
+                            if code_bg:
+                                from pptx.dml.color import RGBColor as PPTXRGB  # type: ignore
+                                fill = tx_box.fill
+                                fill.solid()
+                                r = int(code_bg.lstrip('#')[0:2], 16); g = int(code_bg.lstrip('#')[2:4], 16); b = int(code_bg.lstrip('#')[4:6], 16)
+                                fill.fore_color.rgb = PPTXRGB(r, g, b)
+                        except Exception:
+                            pass
                         tf = tx_box.text_frame
                         tf.word_wrap = True
-                        add_text_paragraph(tf, block.code, level=0)
+                        used_highlight = False
+                        lang = (block.language or '').strip()
+                        if lang:
+                            try:
+                                from pygments import lex  # type: ignore
+                                from pygments.lexers import get_lexer_by_name  # type: ignore
+                                from pygments.styles import get_style_by_name  # type: ignore
+                                lexer = get_lexer_by_name(lang)
+                                style_name = None
+                                if isinstance(self.theme, Theme):
+                                    fmt = self.theme.formats.get('pptx') if isinstance(self.theme.formats, dict) else None
+                                    if fmt and getattr(fmt, 'pygments_style', None):
+                                        style_name = fmt.pygments_style  # type: ignore[attr-defined]
+                                    if not style_name and getattr(self.theme, 'pygments_style', None):
+                                        style_name = self.theme.pygments_style  # type: ignore[attr-defined]
+                                style = get_style_by_name(style_name) if style_name else get_style_by_name('default')
+                                # Create one paragraph and add runs for tokens, breaking lines as needed
+                                p = tf.paragraphs[-1] if tf.paragraphs else tf.add_paragraph()
+                                # Clear paragraph if it contains auto text
+                                try:
+                                    if getattr(p, 'clear', None):
+                                        p.clear()
+                                except Exception:
+                                    pass
+                                from pptx.dml.color import RGBColor as PPTXRGB  # type: ignore
+                                for ttype, value in lex(block.code, lexer):
+                                    if value == "":
+                                        continue
+                                    # Find nearest style
+                                    tt = ttype
+                                    while tt and tt not in style.styles:
+                                        tt = tt.parent
+                                    style_str = style.styles.get(tt, '')
+                                    bold = 'bold' in style_str
+                                    italic = 'italic' in style_str
+                                    color = None
+                                    m = re.search(r"#([0-9a-fA-F]{6})", style_str)
+                                    if m:
+                                        color = m.group(1)
+                                    segments = value.split('\n')
+                                    for i, seg in enumerate(segments):
+                                        if seg:
+                                            run = p.add_run()
+                                            run.text = seg
+                                            try:
+                                                run.font.name = 'Courier New'
+                                            except Exception:
+                                                pass
+                                            if bold:
+                                                run.font.bold = True
+                                            if italic:
+                                                run.font.italic = True
+                                            if color:
+                                                try:
+                                                    r = int(color[0:2], 16); g = int(color[2:4], 16); b = int(color[4:6], 16)
+                                                    run.font.color.rgb = PPTXRGB(r, g, b)
+                                                except Exception:
+                                                    pass
+                                        if i < len(segments) - 1:
+                                            p = tf.add_paragraph()
+                                            p.level = 0
+                                    used_highlight = True
+                            except Exception:
+                                used_highlight = False
+                        if not used_highlight:
+                            add_text_paragraph(tf, block.code, level=0)
                     except Exception:
                         add_text_paragraph(current_tf, block.code, level=0)
             elif isinstance(block, IRImage):
@@ -721,13 +972,22 @@ class PdfConverter(Converter):
             raise RuntimeError(guidance)
 
         base_url = f"file://{os.getcwd().rstrip('/')}/"
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])  # --no-sandbox for container CI
-            context = browser.new_context()
-            page = context.new_page()
-            page.set_content(html_str, wait_until="load", base_url=base_url)
-            # prefer_css_page_size honors @page size from theme CSS
-            pdf_bytes = page.pdf(print_background=True, prefer_css_page_size=True)
-            context.close()
-            browser.close()
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])  # --no-sandbox for container CI
+                context = browser.new_context()
+                page = context.new_page()
+                page.set_content(html_str, wait_until="load", base_url=base_url)
+                # prefer_css_page_size honors @page size from theme CSS
+                pdf_bytes = page.pdf(print_background=True, prefer_css_page_size=True)
+                context.close()
+                browser.close()
+        except Exception:
+            guidance = (
+                "Playwright browser not available. To enable PDF export, run:\n"
+                "  pip install playwright\n"
+                "  python -m playwright install chromium\n"
+                "This uses a headless Chromium to print HTML to PDF with full CSS/SVG support."
+            )
+            raise RuntimeError(guidance)
         return pdf_bytes
