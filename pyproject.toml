@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "md2beauty"
 version = "0.1.0"
-description = "Convert Markdown to HTML, DOCX, PPTX, PDF with theme and extension support."
+description = "Convert Markdown to HTML, DOCX, PPTX, PDF with theme support."
 authors = [
     { name="Adrien Nelis", email="your@email.com" }
 ]
@@ -31,13 +31,17 @@ pptx = [
     "Pygments>=2.15.0",
 ]
 pdf = [
-    "playwright",
+    "weasyprint>=62.0",
 ]
 all = [
     "Pygments>=2.15.0",
     "python-docx",
     "python-pptx",
-    "playwright",
+    "weasyprint>=62.0",
+]
+
+dev = [
+    "esbuild>=0.20.0; platform_system == 'Linux' or platform_system == 'Darwin'",
 ]
 
 [tool.pytest.ini_options]
@@ -57,3 +61,15 @@ omit = [
 [tool.coverage.report]
 fail_under = 50
 show_missing = true
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["md2beauty*"]
+
+[tool.setuptools.package-data]
+md2beauty = [
+    "js_renderers/*.mjs",
+    "themes/*.json",
+]

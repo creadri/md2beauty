@@ -30,15 +30,24 @@ pip install md2beauty[docx,pptx,pdf,html]
 ```
 > Use only the ones you are interested in.
 
-### Other dependencies installation
+### Mermaid (JS) renderer
 
-In order to be able to render mermaid diagrams correctly, I didn't find another way than to use nodejs in order to render different parts.
+Mermaid rendering uses a tiny Node-based JS backend. Bundle once, then it works without extra CLI tools:
 
-It's optional but required if you need mermaid support:
-
+1) Ensure Node.js is installed:
+```bash
+node -v
+npm -v
 ```
-npm install mermaid-js
+
+2) Install dev deps and bundle the renderer:
+```bash
+npm install
+node scripts/bundle-mermaid.mjs
 ```
+This produces `md2beauty/js_renderers/mermaid.bundle.mjs` used at runtime.
+
+If Mermaid isn’t bundled and Node/scripts aren’t available at runtime, diagrams are skipped unless strict mode is enabled.
 
 
 ## Usage
@@ -62,11 +71,11 @@ python cli.py -f pdf -i example.md -o example.pdf
 - [x] CLI tool
 - [x] HTML conversion
 - [x] DOCX/PPTX conversion
-- [x] PDF conversion (using Playwright)
+- [x] PDF conversion (using WeasyPrint)
 - [x] Theme system
 - [x] Mermaid/diagram support
-- [ ] Adding code languages highlighting support
-- [ ] Prepare for PIP packaging and dividing into output and render features to lower dependencies depending on needs
+- [x] Adding code languages highlighting support
+- [x] Prepare for PIP packaging and dividing into output and render features to lower dependencies depending on needs
 - [ ] Advanced customization options
 - [ ] Plugin system for additional formats
 

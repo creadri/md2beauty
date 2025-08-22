@@ -3,7 +3,7 @@ from .core import convert_markdown
 import os
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert Markdown to HTML, DOCX, or PPTX with theme and extension support.")
+    parser = argparse.ArgumentParser(description="Convert Markdown to HTML, DOCX, PPTX or PDF with theme and extension support.")
     parser.add_argument("input", help="Input Markdown file")
     parser.add_argument("-f", "--format", choices=["html", "docx", "pptx", "pdf"], default="html", help="Output format")
     parser.add_argument("-o", "--output", help="Output file path")

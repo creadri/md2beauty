@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple, Callable
+import base64
 import hashlib
 import os
-import shutil
-import subprocess
 import tempfile
 import pathlib
 
@@ -124,25 +123,23 @@ class MermaidRenderer(AssetRenderer):
         # Key: (hash, format) -> (path, mime)
         self._cache: Dict[Tuple[str, str], Tuple[str, str]] = {}
 
-        # Resolve executables once
+        # JS backend and script path (prefer bundled .mjs)
+        from .js_runtime import NodeBackend
+        self._js = NodeBackend()
         project_root = pathlib.Path(__file__).resolve().parents[1]
-        local_mmdc = project_root / "node_modules" / ".bin" / "mmdc"
-        mmdc_exe = shutil.which("mmdc")
-        if not mmdc_exe and local_mmdc.exists():
-            mmdc_exe = str(local_mmdc)
-        self._mmdc = mmdc_exe
-        self._npx = shutil.which("npx")
-        self._available = bool(self._mmdc or self._npx)
+        self._bundle = project_root / "md2beauty" / "js_renderers" / "mermaid.bundle.mjs"
+        self._entry = project_root / "md2beauty" / "js_renderers" / "mermaid.entry.mjs"
 
     def is_available(self) -> bool:  # type: ignore[override]
-        return self._available
+        # Available if Node is present and either bundled script or entry script exists
+        return bool(self._js.is_available() and (self._bundle.exists() or self._entry.exists()))
 
     def install_guidance(self) -> Optional[str]:  # type: ignore[override]
         return (
-            "Mermaid CLI not found. To enable Mermaid diagram rendering, install Node.js and then either:\n"
-            "  - Global install: npm i -g @mermaid-js/mermaid-cli\n"
-            "  - Or use npx (no global install): npx @mermaid-js/mermaid-cli -i input.mmd -o output.svg\n"
-            "Verify with: node -v && npm -v. Set MD2BEAUTY_STRICT_DIAGRAMS=1 to fail if unavailable."
+            "Mermaid JS renderer requires Node.js. Recommended: bundle the renderer once with esbuild:\n"
+            "  1) Ensure Node is installed (node -v).\n"
+            "  2) Run: node scripts/bundle-mermaid.mjs\n"
+            "This creates md2beauty/js_renderers/mermaid.bundle.mjs used at runtime."
         )
 
     def _hash(self, code: str, attrs: Optional[Dict[str, Any]]) -> str:
@@ -162,7 +159,7 @@ class MermaidRenderer(AssetRenderer):
         config: Optional[Dict[str, Any]] = None,
     ) -> Optional[RenderResult]:
         # Ensure we have a way to render
-        if not self._available:
+        if not self.is_available():
             strict = False
             if config and isinstance(config, dict):
                 strict = bool(config.get("strict_diagrams"))
@@ -171,7 +168,7 @@ class MermaidRenderer(AssetRenderer):
                 import os as _os
                 strict = _os.getenv("MD2BEAUTY_STRICT_DIAGRAMS", "").lower() in ("1", "true", "yes", "on")
             if strict:
-                raise MermaidUnavailableError(self.install_guidance() or "Mermaid CLI not available")
+                raise MermaidUnavailableError(self.install_guidance() or "Mermaid renderer not available")
             return None
 
         preferred = [f.lower() for f in (preferred_formats or ["svg", "png"])]
@@ -186,7 +183,7 @@ class MermaidRenderer(AssetRenderer):
                 path, mime = self._cache[key]
                 return RenderResult(path=path, mime=mime)
 
-            rr = self._render_with_cli(code, fmt)
+            rr = self._render_with_js(code, fmt)
             if rr:
                 self._cache[key] = (rr.path, rr.mime)
                 return rr
@@ -197,50 +194,30 @@ class MermaidRenderer(AssetRenderer):
             if key in self._cache:
                 path, mime = self._cache[key]
                 return RenderResult(path=path, mime=mime)
-            rr = self._render_with_cli(code, fmt)
+            rr = self._render_with_js(code, fmt)
             if rr:
                 self._cache[key] = (rr.path, rr.mime)
                 return rr
 
         return None
 
-    def _render_with_cli(self, code: str, fmt: str) -> Optional[RenderResult]:
-        # Prepare temp files
-        with tempfile.TemporaryDirectory() as tmpdir:
-            in_path = os.path.join(tmpdir, "diagram.mmd")
-            out_path = os.path.join(tmpdir, f"diagram.{fmt}")
-            with open(in_path, "w", encoding="utf-8") as f:
-                f.write(code)
-
-            # Build command
-            try:
-                if self._mmdc:
-                    cmd = [self._mmdc, "-i", in_path, "-o", out_path]
-                else:
-                    cmd = [self._npx, "@mermaid-js/mermaid-cli", "-i", in_path, "-o", out_path]  # type: ignore[list-item]
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            except Exception:
-                return None
-
-            if not os.path.exists(out_path):
-                return None
-
-            # Persist to a temp file for caller ownership
-            suffix = ".svg" if fmt == "svg" else (".png" if fmt == "png" else f".{fmt}")
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-            with open(out_path, "rb") as src:
-                tmp.write(src.read())
-            tmp.flush()
-            tmp.close()
-
-            mime = (
-                "image/svg+xml" if fmt == "svg" else (
-                    "image/png" if fmt == "png" else (
-                        "image/jpeg" if fmt in ("jpg", "jpeg") else "application/octet-stream"
-                    )
-                )
-            )
-            return RenderResult(path=tmp.name, mime=mime)
+    def _render_with_js(self, code: str, fmt: str) -> Optional[RenderResult]:
+        # Current JS renderer outputs SVG; we'll ignore fmt if not svg
+        script = str(self._bundle if self._bundle.exists() else self._entry)
+        try:
+            result = self._js.run(script, {"code": code, "format": "svg"})
+        except Exception:
+            return None
+        data_b64 = result.get("data")
+        mime = result.get("mime", "image/svg+xml")
+        if not data_b64:
+            return None
+        raw = base64.b64decode(data_b64)
+        suffix = ".svg"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(raw)
+        tmp.flush(); tmp.close()
+        return RenderResult(path=tmp.name, mime=mime)
 
 
 # Set up a default registry with the Mermaid renderer registered
