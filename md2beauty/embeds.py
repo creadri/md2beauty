@@ -8,7 +8,6 @@ import os
 import tempfile
 import pathlib
 
-
 @dataclass
 class RenderResult:
     """Portable asset produced by a renderer.

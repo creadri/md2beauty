@@ -22,3 +22,5 @@ coverage.xml
 
 package-lock.json
 site
+
+mermaid.bundle.mjs

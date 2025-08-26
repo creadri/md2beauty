@@ -114,4 +114,4 @@ This project is licensed under the MIT License.
 
 ### Third party Licences
 This project includes a distribution bundle of:
-- [mermaid(https://github.com/mermaid-js/mermaid)] under MIT License.
+- [mermaid](https://github.com/mermaid-js/mermaid) under MIT License.
