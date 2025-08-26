@@ -16,8 +16,9 @@ NPM ?= npm
 PACKAGE_NAME := md2beauty
 DIST_DIR := dist
 BUNDLE_OUT := md2beauty/js_renderers/mermaid.bundle.mjs
+HTML_DOC_FOLDER := site
 
-.PHONY: help venv install-dev npm-install bundle init test build check-dist install-local publish ci clean distclean clean-venv clean-node system-deps release tag
+.PHONY: help venv install-dev npm-install bundle init test build check-dist install-local publish ci clean distclean clean-venv clean-node system-deps release tag docs-install docs-serve docs-build docs-deploy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS=":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
@@ -100,6 +101,21 @@ tag: ## Create and push a git tag. Usage: make tag VERSION=1.2.3
 ci: ## Run tests then build (used locally to simulate CI)
 	$(PYTEST)
 	$(PY) -m build
+
+# ---- Docs ----
+
+docs-install: venv ## Install documentation tooling (MkDocs + plugins)
+	$(PIP) install -U pip
+	$(PIP) install -e '.[docs]'
+
+docs-serve: ## Serve docs locally with live reload
+	$(VENV_DIR)/bin/mkdocs serve -d $(HTML_DOC_FOLDER) -a 0.0.0.0:8000
+
+docs-build: ## Build the documentation site into ./site
+	$(VENV_DIR)/bin/mkdocs build -d) $(HTML_DOC_FOLDER)
+
+docs-deploy: ## Deploy documentation to GitHub Pages
+	$(VENV_DIR)/bin/mkdocs gh-deploy --force
 
 # ---- Cleaning ----
 

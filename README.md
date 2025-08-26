@@ -76,26 +76,42 @@ python cli.py -f pdf -i example.md -o example.pdf
 - [x] Mermaid/diagram support
 - [x] Adding code languages highlighting support
 - [x] Prepare for PIP packaging and dividing into output and render features to lower dependencies depending on needs
+- [ ] Make Documentation actually useful
 - [ ] First release on piphub
 - [ ] Advanced customization options
-- [ ] Plugin system for additional formats
+- [ ] Plugin system for additional 
 
 ## Other Known Libraries:
 
 | Name              | Description                                                                 | License Type      | Main Language |
 |-------------------|-----------------------------------------------------------------------------|-------------------|---------------|
+| Jupyter nbconvert | Converts Jupyter notebooks (Markdown + code) to HTML, PDF, and more          | BSD               | Python       |
+| MkDocs            | Fast, simple and downright gorgeos static site generator                     | BSD               | Python       |
+| Grip              | Preview GitHub-flavored Markdown with export to HTML                         | MIT               | Python       |
 | Pandoc            | Universal document converter supporting Markdown to many formats (HTML, DOCX, PDF, etc.) | GPL              | Haskell       |
-| Marp              | Markdown presentation tool converting Markdown to slides (HTML, PPTX, PDF)   | MIT               | TypeScript    |
-| Typora            | Markdown editor with export options to DOCX, PDF, and HTML                   | Proprietary       | JavaScript    |
-| Grip              | Preview GitHub-flavored Markdown with export to HTML                         | MIT               | Python        |
-| md-to-pdf         | Node.js tool to convert Markdown files directly to PDF                       | MIT               | JavaScript    |
-| markdown-pdf      | Node.js utility for converting Markdown to PDF                               | MIT               | JavaScript    |
-| remarkable        | Markdown parser and compiler with plugins for various output formats         | MIT               | JavaScript    |
-| reveal-md         | Create reveal.js presentations from Markdown files                           | MIT               | JavaScript    |
-| Jupyter nbconvert | Converts Jupyter notebooks (Markdown + code) to HTML, PDF, and more          | BSD               | Python        |
+| Marp              | Markdown presentation tool converting Markdown to slides (HTML, PPTX, PDF)   | MIT               | TypeScript   |
+| Typora            | Markdown editor with export options to DOCX, PDF, and HTML                   | Proprietary       | JavaScript   |
+| md-to-pdf         | Node.js tool to convert Markdown files directly to PDF                       | MIT               | JavaScript   |
+| markdown-pdf      | Node.js utility for converting Markdown to PDF                               | MIT               | JavaScript   |
+| remarkable        | Markdown parser and compiler with plugins for various output formats         | MIT               | JavaScript   |
+| reveal-md         | Create reveal.js presentations from Markdown files                           | MIT               | JavaScript   |
+
+### Other less known libraries:
+
+| Name              | Description                                                                 | License Type      | Main Language |
+|-------------------|-----------------------------------------------------------------------------|-------------------|---------------|
+| readme2readall    | Converts Markdown to Word with Mermaid Support                              | MIT               | Python       |
+
+### In what this is different ?
+
+* Offline capacity: No relying on github API calls to render markdown
 
 ## Contributing
 Contributions are welcome! Please fork the repository and submit a pull request.
 
 ## License
 This project is licensed under the MIT License.
+
+### Third party Licences
+This project includes a distribution bundle of:
+- [mermaid(https://github.com/mermaid-js/mermaid)] under MIT License.
