@@ -1,6 +1,6 @@
 // Mermaid JS renderer entry (to be bundled with esbuild)
-// Requires dev-time deps: @mermaid-js/mermaid, @xmldom/xmldom
-import mermaid from '@mermaid-js/mermaid';
+// Requires dev-time deps: mermaid, @xmldom/xmldom
+import mermaid from 'mermaid';
 import { DOMImplementation } from '@xmldom/xmldom';
 
 const readStdin = async () => {

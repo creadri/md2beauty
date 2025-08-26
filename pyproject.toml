@@ -7,12 +7,12 @@ name = "md2beauty"
 version = "0.1.0"
 description = "Convert Markdown to HTML, DOCX, PPTX, PDF with theme support."
 authors = [
-    { name="Adrien Nelis", email="your@email.com" }
+    { name="Adrien Nelis" }
 ]
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "pydantic>=2.0.0",
+    "pydantic>=2.11.5",
 ]
 
 [project.scripts]

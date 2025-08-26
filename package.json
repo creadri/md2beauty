@@ -4,8 +4,8 @@
   "type": "module",
   "devDependencies": {
     "esbuild": "^0.20.0",
-    "@mermaid-js/mermaid": "^11.2.0",
-    "@xmldom/xmldom": "^0.8.10"
+    "mermaid": ">=11.10.1",
+    "@xmldom/xmldom": ">=0.8.10"
   },
   "scripts": {
     "bundle:mermaid": "node scripts/bundle-mermaid.mjs"

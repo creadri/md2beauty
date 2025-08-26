@@ -76,6 +76,7 @@ python cli.py -f pdf -i example.md -o example.pdf
 - [x] Mermaid/diagram support
 - [x] Adding code languages highlighting support
 - [x] Prepare for PIP packaging and dividing into output and render features to lower dependencies depending on needs
+- [ ] First release on piphub
 - [ ] Advanced customization options
 - [ ] Plugin system for additional formats
 

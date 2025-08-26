@@ -1,0 +1,93 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [ development, main, master ]
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [ development, main, master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install system dependencies (PDF rendering)
+        run: |
+          make system-deps
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dev environment
+        run: |
+          make init
+      - name: Bundle Mermaid renderer
+        run: |
+          make bundle
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          make test
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            .coverage
+
+  build-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install system dependencies (PDF rendering)
+        run: |
+          make system-deps
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dev environment
+        run: |
+          make init
+      - name: Build package
+        run: |
+          source .venv/bin/activate
+          make build check-dist
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI (optional)
+        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          source .venv/bin/activate
+          python -m pip install -U twine
+          twine upload dist/*
