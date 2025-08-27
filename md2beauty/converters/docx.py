@@ -7,6 +7,7 @@ from docx.shared import Pt, RGBColor  # type: ignore
 from docx.oxml.shared import OxmlElement, qn  # type: ignore
 
 from ..theme import Theme
+from .. import is_debug
 from ..mdparser import parse_markdown_stream
 from ..embeds import default_diagram_service
 from . import Converter
@@ -58,6 +59,8 @@ class DocxConverter(Converter):
                             preferred_formats=["png"],
                         )
                     except Exception:
+                        if is_debug():
+                            raise
                         rr = None
                     if rr and rr.path:
                         try:

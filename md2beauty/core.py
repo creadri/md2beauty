@@ -1,4 +1,5 @@
 from typing import Optional, Union
+from . import is_debug
 from .theme import Theme
 from .converters import get_converter
 from .embeds import default_diagram_service
@@ -11,15 +12,24 @@ def _file_contains_mermaid(path: str) -> bool:
                 if line.strip().startswith("```mermaid"):
                     return True
     except Exception:
-        pass
+        if is_debug():
+            raise
     return False
 
 
-def convert_markdown(input_path, output_path: Optional[str] = None, output_format: str = "html", theme: Optional[str] = None):
+def convert_markdown(
+    input_path,
+    output_path: Optional[str] = None,
+    output_format: str = "html",
+    theme: Optional[Union[str, Theme, dict]] = None,
+):
     
     if not theme:
         theme = Theme.from_named_theme("default")
     
+    # Normalize theme dicts to Theme
+    if isinstance(theme, dict):
+        theme = Theme.from_dict(theme)
     # Stream the input file to avoid loading entire markdown into memory
     converter = get_converter(output_format, theme=theme)
     # Preflight: if document uses Mermaid but renderer unavailable, warn once with guidance
@@ -33,8 +43,9 @@ def convert_markdown(input_path, output_path: Optional[str] = None, output_forma
             if _os.getenv("MD2BEAUTY_SILENCE_HINTS", "").lower() not in ("1", "true", "yes", "on"):
                 print(guidance)
     except Exception:
-        # Preflight is best-effort; ignore errors
-        pass
+        # Preflight is best-effort; ignore errors unless debug
+        if is_debug():
+            raise
     with open(input_path, "r", encoding="utf-8") as f:
         try:
             out_bytes = converter.convert_stream(f)
@@ -53,4 +64,6 @@ def convert_markdown(input_path, output_path: Optional[str] = None, output_forma
         try:
             print(out_bytes.decode("utf-8"))
         except Exception:
+            if is_debug():
+                raise
             print(out_bytes)

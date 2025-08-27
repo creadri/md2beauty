@@ -24,3 +24,4 @@ package-lock.json
 site
 
 mermaid.bundle.mjs
+mermaid.bundle.cjs

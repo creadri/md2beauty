@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 from dataclasses import dataclass
 from typing import Optional
+from . import is_debug
 
 
 @dataclass
@@ -57,6 +58,8 @@ class MediaFetcher:
                 tmp.close()
                 return MediaFetchResult(path=tmp.name, content_type=mime, cached=False)
             except Exception:
+                if is_debug():
+                    raise
                 return None
 
         # file:// or local path
@@ -85,8 +88,12 @@ class MediaFetcher:
                 tmp.close()
                 return MediaFetchResult(path=tmp.name, content_type=ctype, cached=False)
             except urllib.error.URLError:
+                if is_debug():
+                    raise
                 return None
             except Exception:
+                if is_debug():
+                    raise
                 return None
 
         # unknown scheme

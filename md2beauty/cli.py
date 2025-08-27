@@ -8,7 +8,11 @@ def main():
     parser.add_argument("-f", "--format", choices=["html", "docx", "pptx", "pdf"], default="html", help="Output format")
     parser.add_argument("-o", "--output", help="Output file path")
     parser.add_argument("-t", "--theme", help="Theme name or path")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode (re-raise internal exceptions)")
     args = parser.parse_args()
+
+    if args.debug:
+        os.environ["MD2BEAUTY_DEBUG"] = "1"
 
     if not args.output:
         base, _ = os.path.splitext(args.input)

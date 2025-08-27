@@ -25,12 +25,8 @@ class RenderResult:
     alt: Optional[str] = None
 
     def cleanup(self) -> None:
-        try:
-            if os.path.exists(self.path):
-                os.unlink(self.path)
-        except Exception:
-            pass
-
+        if os.path.exists(self.path):
+            os.unlink(self.path)
 
 class AssetRenderer:
     """Strategy interface for rendering special blocks into assets."""
@@ -122,30 +118,34 @@ class MermaidRenderer(AssetRenderer):
         # Key: (hash, format) -> (path, mime)
         self._cache: Dict[Tuple[str, str], Tuple[str, str]] = {}
 
-        # JS backend and script path (prefer bundled .mjs)
+        # JS backend and script paths (prefer bundled .cjs, fallback to .mjs or entry)
         from .js_runtime import NodeBackend
         self._js = NodeBackend()
         project_root = pathlib.Path(__file__).resolve().parents[1]
-        self._bundle = project_root / "md2beauty" / "js_renderers" / "mermaid.bundle.mjs"
-        self._entry = project_root / "md2beauty" / "js_renderers" / "mermaid.entry.mjs"
+        base = project_root / "md2beauty" / "js_renderers"
+        self._bundle_cjs = base / "mermaid.bundle.cjs"
+        self._bundle_mjs = base / "mermaid.bundle.mjs"
+        self._entry = base / "mermaid.entry.mjs"
 
     def is_available(self) -> bool:  # type: ignore[override]
-        # Available if Node is present and either bundled script or entry script exists
-        return bool(self._js.is_available() and (self._bundle.exists() or self._entry.exists()))
+        # Available if Node is present and any script exists
+        return bool(
+            self._js.is_available()
+            and (self._bundle_cjs.exists() or self._bundle_mjs.exists() or self._entry.exists())
+        )
 
     def install_guidance(self) -> Optional[str]:  # type: ignore[override]
         return (
             "Mermaid JS renderer requires Node.js. Recommended: bundle the renderer once with esbuild:\n"
             "  1) Ensure Node is installed (node -v).\n"
             "  2) Run: node scripts/bundle-mermaid.mjs\n"
-            "This creates md2beauty/js_renderers/mermaid.bundle.mjs used at runtime."
+            "This creates md2beauty/js_renderers/mermaid.bundle.cjs used at runtime (ESM .mjs fallback)."
         )
 
     def _hash(self, code: str, attrs: Optional[Dict[str, Any]]) -> str:
         h = hashlib.sha256()
         h.update(code.encode("utf-8"))
         if attrs:
-            # shove a deterministic repr of attrs into the hash
             items = ",".join(f"{k}={attrs[k]}" for k in sorted(attrs.keys()))
             h.update(items.encode("utf-8"))
         return h.hexdigest()
@@ -163,7 +163,6 @@ class MermaidRenderer(AssetRenderer):
             if config and isinstance(config, dict):
                 strict = bool(config.get("strict_diagrams"))
             if not strict:
-                # Env var override allows strict mode without threading config
                 import os as _os
                 strict = _os.getenv("MD2BEAUTY_STRICT_DIAGRAMS", "").lower() in ("1", "true", "yes", "on")
             if strict:
@@ -173,7 +172,6 @@ class MermaidRenderer(AssetRenderer):
         preferred = [f.lower() for f in (preferred_formats or ["svg", "png"])]
         digest = self._hash(code, attrs)
 
-        # Try requested formats in order
         for fmt in preferred:
             if fmt not in ("svg", "png", "jpeg", "jpg"):
                 continue
@@ -187,7 +185,6 @@ class MermaidRenderer(AssetRenderer):
                 self._cache[key] = (rr.path, rr.mime)
                 return rr
 
-        # If none of the preferred formats worked, try a simple fallback order
         for fmt in ("svg", "png"):
             key = (digest, fmt)
             if key in self._cache:
@@ -201,22 +198,30 @@ class MermaidRenderer(AssetRenderer):
         return None
 
     def _render_with_js(self, code: str, fmt: str) -> Optional[RenderResult]:
-        # Current JS renderer outputs SVG; we'll ignore fmt if not svg
-        script = str(self._bundle if self._bundle.exists() else self._entry)
-        try:
-            result = self._js.run(script, {"code": code, "format": "svg"})
-        except Exception:
-            return None
+        script_path = (
+            self._bundle_cjs if self._bundle_cjs.exists() else (
+                self._bundle_mjs if self._bundle_mjs.exists() else self._entry
+            )
+        )
+        script = str(script_path)
+
+        result = self._js.run(script, {"code": code, "format": "svg"})
+
         data_b64 = result.get("data")
         mime = result.get("mime", "image/svg+xml")
         if not data_b64:
             return None
         raw = base64.b64decode(data_b64)
-        suffix = ".svg"
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
         tmp.write(raw)
         tmp.flush(); tmp.close()
         return RenderResult(path=tmp.name, mime=mime)
+
+# Set up a default registry with the Mermaid renderer registered
+default_registry = RendererRegistry()
+default_registry.register(MermaidRenderer())
+
+default_diagram_service = DiagramService(default_registry)
 
 
 # Set up a default registry with the Mermaid renderer registered

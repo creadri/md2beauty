@@ -4,6 +4,7 @@ from typing import Optional, Union, Iterable
 import re
 
 from ..theme import Theme
+from .. import is_debug
 from ..mdparser import parse_markdown_stream
 from ..embeds import default_diagram_service, RenderResult
 from . import Converter
@@ -43,7 +44,7 @@ class HtmlConverter(Converter):
                 inner = "".join(self._render_inline_span_html(s) for s in spans) or self._escape_html(block.text)
                 parts.append(f"<p>{inner}</p>")
             elif isinstance(block, IRCode):
-                if block.language == 'mermaid':
+                if (block.language or '').strip().lower() == 'mermaid':
                     rr: Optional[RenderResult] = None
                     try:
                         rr = default_diagram_service.render(
@@ -52,19 +53,27 @@ class HtmlConverter(Converter):
                             preferred_formats=["svg", "png"],
                         )
                     except Exception:
+                        if is_debug():
+                            raise
                         rr = None
-                    if rr and rr.mime == "image/svg+xml":
+                        raise
+                    if rr:
+                        mime = (rr.mime or "").lower()
                         try:
-                            with open(rr.path, "r", encoding="utf-8") as f:
-                                parts.append(f.read())
-                        finally:
-                            rr.cleanup()
-                    elif rr and rr.mime.startswith("image/"):
-                        try:
-                            with open(rr.path, "rb") as f:
-                                import base64 as _b64
-                                data = _b64.b64encode(f.read()).decode("ascii")
-                                parts.append(f"<img src=\"data:{rr.mime};base64,{data}\" alt=\"mermaid diagram\"/>")
+                            if mime.startswith("image/svg") or rr.path.lower().endswith(".svg"):
+                                # Inline SVG so it inherits CSS and scales properly
+                                with open(rr.path, "r", encoding="utf-8") as f:
+                                    parts.append(f.read())
+                            elif mime.startswith("image/"):
+                                # Fallback: embed raster output as base64 data URI
+                                with open(rr.path, "rb") as f:
+                                    import base64 as _b64
+                                    data = _b64.b64encode(f.read()).decode("ascii")
+                                    parts.append(
+                                        f"<img src=\"data:{rr.mime};base64,{data}\" alt=\"mermaid diagram\"/>"
+                                    )
+                            else:
+                                parts.append(self._wrap_code_block(block.code, 'mermaid'))
                         finally:
                             rr.cleanup()
                     else:

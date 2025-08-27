@@ -72,7 +72,7 @@ init: install-dev bundle ## Setup dev environment (venv + deps) and bundle asset
 # ---- Quality & Tests ----
 
 test: ## Run test suite (pytest)
-	$(PYTEST)
+	MD2BEAUTY_DEBUG=1 $(PYTEST)
 
 # ---- Build & Release ----
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Bundle the Mermaid JS renderer into a single .mjs file with esbuild
-// Output: md2beauty/js_renderers/mermaid.bundle.mjs
+// Bundle the Mermaid JS renderer into a single CommonJS file with esbuild
+// Output: md2beauty/js_renderers/mermaid.bundle.cjs
 
 import { build } from 'esbuild';
 import { fileURLToPath } from 'url';
@@ -18,16 +18,16 @@ if (!existsSync(outdir)) mkdirSync(outdir, { recursive: true });
 try {
   await build({
     entryPoints: [entry],
-    outfile: resolve(outdir, 'mermaid.bundle.mjs'),
+    outfile: resolve(outdir, 'mermaid.bundle.cjs'),
     bundle: true,
-    format: 'esm',
+    format: 'cjs',
     platform: 'node',
     sourcemap: false,
     external: [],
-    target: ['es2020'],
+    target: ['node18'],
     logLevel: 'info',
   });
-  console.log('Bundled Mermaid renderer to md2beauty/js_renderers/mermaid.bundle.mjs');
+  console.log('Bundled Mermaid renderer to md2beauty/js_renderers/mermaid.bundle.cjs');
 } catch (err) {
   console.error(err);
   process.exit(1);
