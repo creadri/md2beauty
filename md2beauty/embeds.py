@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Tuple, Callable
+from typing import Optional, Dict, Any, List, Tuple
 import base64
 import hashlib
 import os
 import tempfile
 import pathlib
 
+
 @dataclass
 class RenderResult:
-    """Portable asset produced by a renderer.
-
-    path: filesystem path to the produced asset (e.g., image file)
-    mime: MIME type, e.g., 'image/svg+xml' or 'image/png'
-    width/height: optional pixel dimensions if known
-    alt: optional alt text
-    """
-
     path: str
     mime: str
     width: Optional[int] = None
@@ -28,23 +21,17 @@ class RenderResult:
         if os.path.exists(self.path):
             os.unlink(self.path)
 
-class AssetRenderer:
-    """Strategy interface for rendering special blocks into assets."""
 
+class AssetRenderer:
     kind: str = ""
 
     def can_render(self, kind: str) -> bool:
         return kind.lower() == self.kind.lower()
 
     def is_available(self) -> bool:
-        """Whether this renderer has the necessary tooling to operate.
-
-        Default to True; concrete implementations can override.
-        """
         return True
 
     def install_guidance(self) -> Optional[str]:
-        """Optional human-readable guidance on how to enable this renderer."""
         return None
 
     def render(
@@ -58,8 +45,6 @@ class AssetRenderer:
 
 
 class RendererRegistry:
-    """Global registry for asset renderers (mermaid, plantuml, ...)."""
-
     def __init__(self) -> None:
         self._renderers: Dict[str, AssetRenderer] = {}
 
@@ -71,11 +56,6 @@ class RendererRegistry:
 
 
 class DiagramService:
-    """Facade to render diagrams using registered renderers.
-
-    preferred_formats: ordered list of desired output formats (e.g., ["svg", "png"]).
-    """
-
     def __init__(self, registry: RendererRegistry) -> None:
         self._registry = registry
 
@@ -93,7 +73,6 @@ class DiagramService:
         return r.render(code=code, attrs=attrs, preferred_formats=preferred_formats, config=config)
 
     def has(self, kind: str) -> bool:
-        """Return True if a renderer exists and is available for the given kind."""
         r = self._registry.get(kind)
         return bool(r and r.is_available())
 
@@ -103,8 +82,6 @@ class DiagramService:
 
 
 class MermaidUnavailableError(RuntimeError):
-    """Raised when Mermaid rendering is requested but tooling is unavailable."""
-
     def __init__(self, guidance: str) -> None:
         super().__init__(guidance)
         self.guidance = guidance
@@ -114,32 +91,64 @@ class MermaidRenderer(AssetRenderer):
     kind = "mermaid"
 
     def __init__(self) -> None:
-        # In-process cache to avoid re-rendering identical diagrams in a single run
-        # Key: (hash, format) -> (path, mime)
         self._cache: Dict[Tuple[str, str], Tuple[str, str]] = {}
-
-        # JS backend and script paths (prefer bundled .cjs, fallback to .mjs or entry)
         from .js_runtime import NodeBackend
         self._js = NodeBackend()
-        project_root = pathlib.Path(__file__).resolve().parents[1]
-        base = project_root / "md2beauty" / "js_renderers"
-        self._bundle_cjs = base / "mermaid.bundle.cjs"
-        self._bundle_mjs = base / "mermaid.bundle.mjs"
-        self._entry = base / "mermaid.entry.mjs"
+        base = pathlib.Path(__file__).resolve().parents[1] / "md2beauty" / "js_renderers"
+        # Preferred: programmatic mermaid-cli ESM entry
+        self._cli_entry = base / "mermaid_cli.entry.mjs"
+        self._cli_bundle_mjs = base / "mermaid_cli.bundle.mjs"
+        self._cli_bundle_cjs = base / "mermaid_cli.bundle.cjs"
+        # Availability probe cache
+        self._avail_checked = False
+        self._avail_ok = False
 
-    def is_available(self) -> bool:  # type: ignore[override]
-        # Available if Node is present and any script exists
-        return bool(
-            self._js.is_available()
-            and (self._bundle_cjs.exists() or self._bundle_mjs.exists() or self._entry.exists())
-        )
+    def _select_script(self) -> pathlib.Path|None:
+        if self._cli_entry.exists():
+            return self._cli_entry
+        if self._cli_bundle_mjs.exists():
+            return self._cli_bundle_mjs
+        if self._cli_bundle_cjs.exists():
+            return self._cli_bundle_cjs
+        return None
+    
 
-    def install_guidance(self) -> Optional[str]:  # type: ignore[override]
+    def is_available(self) -> bool:
+        # First, require Node and at least one script present
+        if not self._js.is_available():
+            return False
+        if not any(
+            p.exists()
+            for p in (
+                self._cli_entry,
+                self._cli_bundle_mjs,
+                self._cli_bundle_cjs,
+            )
+        ):
+            return False
+
+        # Return cached probe result if already computed
+        if self._avail_checked:
+            return self._avail_ok
+
+        # Probe run: ensure Puppeteer/CLI works in this environment
+        try:
+            script = str(self._select_script())
+            self._js.run(script, {"code": "graph TD;A-->B;", "format": "svg"}, timeout=20)
+            self._avail_ok = True
+        except Exception:
+            self._avail_ok = False
+        finally:
+            self._avail_checked = True
+
+        return self._avail_ok
+
+    def install_guidance(self) -> Optional[str]:
         return (
-            "Mermaid JS renderer requires Node.js. Recommended: bundle the renderer once with esbuild:\n"
+            "Mermaid renderer requires Node.js. Recommended: bundle once with esbuild:\n"
             "  1) Ensure Node is installed (node -v).\n"
-            "  2) Run: node scripts/bundle-mermaid.mjs\n"
-            "This creates md2beauty/js_renderers/mermaid.bundle.cjs used at runtime (ESM .mjs fallback)."
+            "  2) Run either: npm run bundle:mermaid-cli  (preferred) or npm run bundle:mermaid (fallback)\n"
+            "This creates md2beauty/js_renderers/mermaid_cli.bundle.mjs (or mermaid.bundle.cjs)."
         )
 
     def _hash(self, code: str, attrs: Optional[Dict[str, Any]]) -> str:
@@ -157,14 +166,12 @@ class MermaidRenderer(AssetRenderer):
         preferred_formats: Optional[List[str]] = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> Optional[RenderResult]:
-        # Ensure we have a way to render
         if not self.is_available():
             strict = False
             if config and isinstance(config, dict):
                 strict = bool(config.get("strict_diagrams"))
             if not strict:
-                import os as _os
-                strict = _os.getenv("MD2BEAUTY_STRICT_DIAGRAMS", "").lower() in ("1", "true", "yes", "on")
+                strict = os.getenv("MD2BEAUTY_STRICT_DIAGRAMS", "").lower() in ("1", "true", "yes", "on")
             if strict:
                 raise MermaidUnavailableError(self.install_guidance() or "Mermaid renderer not available")
             return None
@@ -179,7 +186,6 @@ class MermaidRenderer(AssetRenderer):
             if key in self._cache:
                 path, mime = self._cache[key]
                 return RenderResult(path=path, mime=mime)
-
             rr = self._render_with_js(code, fmt)
             if rr:
                 self._cache[key] = (rr.path, rr.mime)
@@ -194,37 +200,30 @@ class MermaidRenderer(AssetRenderer):
             if rr:
                 self._cache[key] = (rr.path, rr.mime)
                 return rr
-
         return None
 
     def _render_with_js(self, code: str, fmt: str) -> Optional[RenderResult]:
-        script_path = (
-            self._bundle_cjs if self._bundle_cjs.exists() else (
-                self._bundle_mjs if self._bundle_mjs.exists() else self._entry
-            )
-        )
-        script = str(script_path)
-
-        result = self._js.run(script, {"code": code, "format": "svg"})
-
+        script = str(self._select_script())
+        result = self._js.run(script, {"code": code, "format": fmt})
         data_b64 = result.get("data")
-        mime = result.get("mime", "image/svg+xml")
         if not data_b64:
             return None
+        if fmt == "png":
+            mime = result.get("mime", "image/png")
+            suffix = ".png"
+        elif fmt in ("jpg", "jpeg"):
+            mime = result.get("mime", "image/jpeg")
+            suffix = ".jpg"
+        else:
+            mime = result.get("mime", "image/svg+xml")
+            suffix = ".svg"
         raw = base64.b64decode(data_b64)
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp.write(raw)
         tmp.flush(); tmp.close()
         return RenderResult(path=tmp.name, mime=mime)
 
-# Set up a default registry with the Mermaid renderer registered
-default_registry = RendererRegistry()
-default_registry.register(MermaidRenderer())
 
-default_diagram_service = DiagramService(default_registry)
-
-
-# Set up a default registry with the Mermaid renderer registered
 default_registry = RendererRegistry()
 default_registry.register(MermaidRenderer())
 
