@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Iterable, Iterator, Union, Any
+from typing import List, Optional, Iterable, Iterator
 import io
 import re
 
@@ -69,9 +69,6 @@ class Table(Block):
     aligns: List[Optional[str]]  # 'left' | 'center' | 'right' | None per column
     rows: List[List[str]]
 
-
-# ---------------- Inline emphasis (bold/italic/strikethrough) ----------------
-
 @dataclass
 class InlineSpan:
     text: str
@@ -113,7 +110,11 @@ def parse_inline_emphasis(text: str) -> List[InlineSpan]:
 
 
 def parse_markdown_stream(md_text: Optional[str] = None, lines: Optional[Iterable[str]] = None) -> Iterator[Block]:
-    """Streaming Markdown parser yielding IR blocks incrementally.
+    """DEPRECATED: Streaming Markdown parser yielding IR blocks incrementally.
+
+    This function is kept for backward compatibility. New code should use
+    ``parse_markdown`` which returns a full ``Document``. Most converters now
+    operate on the full IR and no longer consume a streaming iterator.
 
     Accepts either a full string (md_text) or an iterable of lines.
     """

@@ -32,7 +32,11 @@ class DocxConverter(Converter):
             Table as IRTable,
             parse_inline_emphasis,
         )
-        for block in parse_markdown_stream(lines=lines):
+        def convert_document(self, doc: Document) -> bytes:  # type: ignore[override]
+            document = Document()
+            if isinstance(self.theme, Theme):
+                self.theme.apply_to_docx(document)
+            for block in doc.blocks:
             if isinstance(block, IRHeading):
                 lvl = max(1, min(6, block.level))
                 par = document.add_paragraph()

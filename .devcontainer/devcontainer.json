@@ -1,0 +1,35 @@
+{
+  "name": "MD2Beauty Python Dev Container",
+  // Utilisation d'une image Python officielle légère
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  // Variables d'environnement utiles pour WeasyPrint / Pango etc.
+  "containerEnv": {
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1"
+  },
+  // Extensions VS Code pertinentes pour Python + docs
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.isort",
+        "ms-toolsai.jupyter",
+        "tamasfe.even-better-toml",
+        "charliermarsh.ruff",
+        "github.vscode-github-actions",
+        "github.vscode-pull-request-github"
+      ]
+    }
+  },
+  // Installation des dépendances système nécessaires à weasyprint, python-pptx (libjpeg), etc.
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+  "postCreateCommand": "pip install --upgrade pip && pip install -e .[all,docs] pytest pytest-cov && echo 'Python deps installed'",
+  // User par défaut (image python utilise 'vscode')
+  "remoteUser": "vscode",
+  // Montage additionnel si besoin futur (ex: cache pip)
+  "mounts": [
+    "source=md2beauty-pip-cache,target=/home/vscode/.cache/pip,type=volume"
+  ]
+}

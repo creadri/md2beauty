@@ -5,8 +5,19 @@ import re
 
 from ..theme import Theme
 from .. import is_debug
-from ..mdparser import parse_markdown_stream
-from ..embeds import default_diagram_service, RenderResult
+from ..mdparser import (
+    Document,
+    Heading as IRHeading,
+    Paragraph as IRParagraph,
+    CodeBlock as IRCode,
+    ListBlock as IRList,
+    Image as IRImage,
+    SvgBlock as IRSvg,
+    ThematicBreak as IRHr,
+    Table as IRTable,
+    parse_inline_emphasis,
+)
+from ..embeds import RendererRegistry, RenderResult
 from . import Converter
 
 
@@ -14,24 +25,12 @@ class HtmlConverter(Converter):
     def __init__(self, theme: Optional[Union[str, Theme]] = None):
         super().__init__(theme)
 
-    def convert_stream(self, lines: Iterable[str]) -> bytes:
+    def convert_document(self, doc: Document) -> bytes:  # type: ignore[override]
         parts: list[str] = []
-        from ..mdparser import (
-            Heading as IRHeading,
-            Paragraph as IRParagraph,
-            CodeBlock as IRCode,
-            ListBlock as IRList,
-            Image as IRImage,
-            SvgBlock as IRSvg,
-            ThematicBreak as IRHr,
-            Table as IRTable,
-            parse_inline_emphasis,
-        )
         title_text: Optional[str] = None
-
         pygments_css: Optional[str] = None
 
-        for block in parse_markdown_stream(lines=lines):
+        for block in doc.blocks:
             if isinstance(block, IRHeading):
                 lvl = max(1, min(6, block.level))
                 spans = parse_inline_emphasis(block.text)
@@ -44,28 +43,16 @@ class HtmlConverter(Converter):
                 inner = "".join(self._render_inline_span_html(s) for s in spans) or self._escape_html(block.text)
                 parts.append(f"<p>{inner}</p>")
             elif isinstance(block, IRCode):
-                if (block.language or '').strip().lower() == 'mermaid':
-                    rr: Optional[RenderResult] = None
-                    try:
-                        rr = default_diagram_service.render(
-                            kind="mermaid",
-                            code=block.code,
-                            preferred_formats=["svg", "png"],
-                        )
-                    except Exception:
-                        if is_debug():
-                            raise
-                        rr = None
-                        raise
+                renderer = RendererRegistry().get(block.language)
+                if renderer:
+                    rr = renderer.render(block.code)
                     if rr:
                         mime = (rr.mime or "").lower()
                         try:
                             if mime.startswith("image/svg") or rr.path.lower().endswith(".svg"):
-                                # Inline SVG so it inherits CSS and scales properly
                                 with open(rr.path, "r", encoding="utf-8") as f:
                                     parts.append(f.read())
                             elif mime.startswith("image/"):
-                                # Fallback: embed raster output as base64 data URI
                                 with open(rr.path, "rb") as f:
                                     import base64 as _b64
                                     data = _b64.b64encode(f.read()).decode("ascii")
@@ -120,8 +107,7 @@ class HtmlConverter(Converter):
                 tag = 'ol' if block.ordered else 'ul'
                 parts.append(f"<{tag}>")
                 for item in block.items:
-                    from ..mdparser import parse_inline_emphasis as _pie
-                    spans = _pie(item.text)
+                    spans = parse_inline_emphasis(item.text)
                     inner = "".join(self._render_inline_span_html(s) for s in spans) if spans else self._escape_html(item.text)
                     parts.append(f"<li>{inner}</li>")
                 parts.append(f"</{tag}>")
@@ -132,11 +118,10 @@ class HtmlConverter(Converter):
             elif isinstance(block, IRHr):
                 parts.append("<hr />")
             elif isinstance(block, IRTable):
-                from ..mdparser import parse_inline_emphasis as _pie
                 def _td_style(align: Optional[str]) -> str:
                     return f' style="text-align: {align};"' if align in ("left", "center", "right") else ''
                 def _inline_html(text: str) -> str:
-                    spans = _pie(text)
+                    spans = parse_inline_emphasis(text)
                     return "".join(self._render_inline_span_html(s) for s in spans) if spans else self._escape_html(text)
                 thead = "<thead><tr>" + "".join(
                     f"<th{_td_style(block.aligns[i] if i < len(block.aligns) else None)}>{_inline_html(h)}</th>"

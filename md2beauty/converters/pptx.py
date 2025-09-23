@@ -6,7 +6,17 @@ from pptx.util import Inches, Pt  # type: ignore
 from pptx.dml.color import RGBColor  # type: ignore
 
 from ..theme import Theme
-from ..mdparser import parse_markdown_stream
+from ..mdparser import (
+    Document,
+    Heading as IRHeading,
+    Paragraph as IRParagraph,
+    CodeBlock as IRCode,
+    ListBlock as IRList,
+    Image as IRImage,
+    SvgBlock as IRSvg,
+    ThematicBreak as IRHr,
+    Table as IRTable,
+)
 from ..embeds import default_diagram_service
 from . import Converter
 
@@ -15,22 +25,10 @@ class PptxConverter(Converter):
     def __init__(self, theme: Optional[Union[str, Theme]] = None):
         super().__init__(theme)
 
-    def convert_stream(self, lines: Iterable[str]) -> bytes:
+    def convert_document(self, doc: Document) -> bytes:  # type: ignore[override]
         prs = Presentation()
         if isinstance(self.theme, Theme):
             self.theme.apply_to_pptx(prs)
-
-        from ..mdparser import (
-            Heading as IRHeading,
-            Paragraph as IRParagraph,
-            CodeBlock as IRCode,
-            ListBlock as IRList,
-            Image as IRImage,
-            SvgBlock as IRSvg,
-            ThematicBreak as IRHr,
-            Table as IRTable,
-            parse_inline_emphasis,
-        )
 
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         top = Inches(1)
@@ -52,7 +50,7 @@ class PptxConverter(Converter):
             except Exception:
                 pass
 
-        for block in parse_markdown_stream(lines=lines):
+        for block in doc.blocks:
             if isinstance(block, IRHeading):
                 p = tf.add_paragraph()
                 p.level = 0
