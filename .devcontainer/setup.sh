@@ -46,7 +46,7 @@ sudo apt-get install -y build-essential libcairo2-dev libpango1.0-dev libjpeg-de
 # Skip Puppeteer Chromium download
 export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 # Add configuration for puppeteer in node user
-cat <<EOF > /home/node/.puppeteerrc.json
+cat <<EOF > /home/vscode/.puppeteerrc.json
 {
   "args": ["--no-sandbox", "--disable-setuid-sandbox"]
 }
