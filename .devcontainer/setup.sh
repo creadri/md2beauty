@@ -53,7 +53,7 @@ cat <<EOF > /home/vscode/.puppeteerrc.json
 EOF
 
 # Add Env variables to bashrc and automatically append mmdc command
-cat <<EOF >> /home/node/.bashrc
+cat <<EOF >> /home/vscode/.bashrc
 alias mmdc='mmdc --puppeteerConfigFile ~/.puppeteerrc.json'
 export PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium"
 EOF
